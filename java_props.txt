@@ -1,0 +1,93 @@
+Property settings:
+    file.encoding = UTF-8
+    file.separator = \
+    java.class.path = 
+    java.class.version = 64.0
+    java.home = C:\Program Files\Java\jdk-20
+    java.io.tmpdir = C:\Users\ADMINI~1\AppData\Local\Temp\
+    java.library.path = C:\Program Files\Java\jdk-20\bin
+        C:\Windows\Sun\Java\bin
+        C:\Windows\system32
+        C:\Windows
+        C:\Ruby33-x64\bin
+        C:\Program Files (x86)\VMware\VMware Workstation\bin\
+        C:\src\flutter\bin
+        C:\Program Files\Common Files\Oracle\Java\javapath
+        C:\Windows\system32
+        C:\Windows
+        C:\Windows\System32\Wbem
+        C:\Windows\System32\WindowsPowerShell\v1.0\
+        C:\Windows\System32\OpenSSH\
+        C:\Program Files\NVIDIA Corporation\NVIDIA App\NvDLISR
+        C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common
+        C:\Program Files\Git\cmd
+        C:\Users\Administrator\AppData\Local\Android\Sdk\platform-tools
+        C:\Users\Administrator\AppData\Local\Android\Sdk\platform-tools
+        C:\Users\Administrator\AppData\Local\Android\Sdk\cmdline-tools\latest\bin
+        C:\Program Files\Microsoft VS Code\bin
+        C:\Program Files\nodejs\
+        C:\Program Files\dotnet\
+        C:\Program Files\High Figure\USBoNET\GUI
+        C:\ffmpeg\bin
+        C:\tools\sqlmap
+        D:\xampp\php
+        C:\tools\phpggc-master
+        C:\Users\Administrator\AppData\Local\Programs\Python\Python311\Scripts\
+        C:\Users\Administrator\AppData\Local\Programs\Python\Python311\
+        C:\Users\Administrator\AppData\Local\Programs\Python\Python310\Scripts\
+        C:\Users\Administrator\AppData\Local\Programs\Python\Python310\
+        C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps
+        C:\Users\Administrator\AppData\Local\GitHubDesktop\bin
+        C:\Users\Administrator\AppData\Roaming\npm
+        C:\Users\Administrator\AppData\Local\Programs\cursor\resources\app\bin
+        C:\Users\Administrator\AppData\Local\Programs\Ollama
+        C:\tools\sqlmap
+        C:\Program Files (x86)\Nmap
+        .
+    java.runtime.name = Java(TM) SE Runtime Environment
+    java.runtime.version = 20.0.2+9-78
+    java.specification.name = Java Platform API Specification
+    java.specification.vendor = Oracle Corporation
+    java.specification.version = 20
+    java.vendor = Oracle Corporation
+    java.vendor.url = https://java.oracle.com/
+    java.vendor.url.bug = https://bugreport.java.com/bugreport/
+    java.version = 20.0.2
+    java.version.date = 2023-07-18
+    java.vm.compressedOopsMode = Zero based
+    java.vm.info = mixed mode, sharing
+    java.vm.name = Java HotSpot(TM) 64-Bit Server VM
+    java.vm.specification.name = Java Virtual Machine Specification
+    java.vm.specification.vendor = Oracle Corporation
+    java.vm.specification.version = 20
+    java.vm.vendor = Oracle Corporation
+    java.vm.version = 20.0.2+9-78
+    jdk.debug = release
+    line.separator = \r \n 
+    native.encoding = Cp1252
+    os.arch = amd64
+    os.name = Windows 11
+    os.version = 10.0
+    path.separator = ;
+    stderr.encoding = Cp1252
+    stdout.encoding = Cp1252
+    sun.arch.data.model = 64
+    sun.boot.library.path = C:\Program Files\Java\jdk-20\bin
+    sun.cpu.endian = little
+    sun.cpu.isalist = amd64
+    sun.io.unicode.encoding = UnicodeLittle
+    sun.java.launcher = SUN_STANDARD
+    sun.jnu.encoding = Cp1252
+    sun.management.compiler = HotSpot 64-Bit Tiered Compilers
+    sun.os.patch.level = 
+    user.country = US
+    user.dir = C:\Users\Administrator\Documents\mobile
+    user.home = C:\Users\Administrator
+    user.language = en
+    user.name = Administrator
+    user.script = 
+    user.variant = 
+
+java version "20.0.2" 2023-07-18
+Java(TM) SE Runtime Environment (build 20.0.2+9-78)
+Java HotSpot(TM) 64-Bit Server VM (build 20.0.2+9-78, mixed mode, sharing)

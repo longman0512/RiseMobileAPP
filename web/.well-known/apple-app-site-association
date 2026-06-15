@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["RW7B4N3R46.com.caethanos.risesimple"],
+        "components": [
+          {
+            "/": "/protocol/*",
+            "comment": "RISE NFC coin links: lockin, flow, reset"
+          }
+        ]
+      }
+    ]
+  }
+}
