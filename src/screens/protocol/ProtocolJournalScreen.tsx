@@ -120,6 +120,10 @@ export function ProtocolJournalScreen({ route }: Props) {
       >
         <Text className={saving ? 'text-zinc-600' : 'text-zinc-400'}>Skip</Text>
       </Pressable>
+
+      <Pressable className="h-10 items-center justify-center" onPress={() => session.cancelSession()}>
+        <Text className="text-zinc-600 text-sm">Back to main</Text>
+      </Pressable>
     </View>
   );
 }

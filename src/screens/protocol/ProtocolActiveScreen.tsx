@@ -39,7 +39,7 @@ export function ProtocolActiveScreen({ route }: Props) {
       </Text>
 
       {isReset ? (
-        <Text className="text-zinc-300 text-lg text-center mb-10 px-4 leading-7">
+        <Text className="text-zinc-500 text-sm text-center mb-6 px-4">
           {session.resetInstruction}
         </Text>
       ) : null}
@@ -48,6 +48,33 @@ export function ProtocolActiveScreen({ route }: Props) {
 
       {session.phase === 'overtime' ? (
         <Text className="text-zinc-500 mt-2 text-sm">Overtime — tap End when finished</Text>
+      ) : null}
+
+      {isReset ? (
+        <View className="mt-10 w-full max-w-md gap-4">
+          <View>
+            <Text className="text-zinc-400 text-sm mb-2">What did you just do?</Text>
+            <TextInput
+              className="rounded-xl border border-white/10 bg-zinc-900/80 px-4 py-3 text-white"
+              placeholder="Reflect…"
+              placeholderTextColor="#71717a"
+              value={session.journalNote}
+              onChangeText={session.setJournalNote}
+              multiline
+            />
+          </View>
+          <View>
+            <Text className="text-zinc-400 text-sm mb-2">What's next?</Text>
+            <TextInput
+              className="rounded-xl border border-white/10 bg-zinc-900/80 px-4 py-3 text-white"
+              placeholder="Set your intention…"
+              placeholderTextColor="#71717a"
+              value={session.journalNextBlock}
+              onChangeText={session.setJournalNextBlock}
+              multiline
+            />
+          </View>
+        </View>
       ) : null}
 
       {config.allowsThoughtCapture ? (

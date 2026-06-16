@@ -95,6 +95,7 @@ type SessionContextValue = {
   saveJournal: () => Promise<void>;
   extendFlowTwentyMinutes: () => void;
   dismissResumeFlowPrompt: () => void;
+  cancelSession: () => void;
   handleProtocolTrigger: (protocol: CoinType, options?: { hasRegisteredCoin?: boolean }) => void;
   isSessionBlocking: () => boolean;
 };
@@ -481,10 +482,17 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     });
 
     const endScreen = PROTOCOL_CONFIG[activeProtocol].endScreen;
+
+    // RESET captures its reflection live during the session, so persist those
+    // notes now and return straight to the main screen (no end reflection screen).
+    const goStraightHome = endScreen === 'none';
+    const liveNote = goStraightHome ? journalNote.trim() || null : null;
+    const liveNextBlock = goStraightHome ? journalNextBlock.trim() || null : null;
+
     if (endScreen === 'summary') {
       setSessionPhase('summary');
       navigateProtocolStack('Summary', { protocol: activeProtocol });
-    } else {
+    } else if (endScreen === 'journal') {
       setSessionPhase('journal');
       navigateProtocolStack('Journal', { protocol: activeProtocol });
     }
@@ -494,8 +502,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     const persistPromise = persistSession(
       activeProtocol,
-      null,
-      null,
+      liveNote,
+      liveNextBlock,
       focusMinutes,
       nextSegments,
     );
@@ -505,8 +513,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         pendingPersistRef.current = null;
       }
     });
+
+    // Return home immediately for RESET; persistence continues in the background.
+    if (goStraightHome) {
+      resetSessionState();
+    }
   }, [
     activeProtocol,
+    journalNote,
+    journalNextBlock,
     overtimeSeconds,
     persistSession,
     plannedMinutes,
@@ -630,6 +645,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     pendingFlowResumeSecondsRef.current = null;
     setPendingFlowResumeDisplay(null);
     setPausedFlowRemainingSeconds(null);
+  }, []);
+
+  // Abandon the pre-start screen (or any non-active protocol screen) and return
+  // to the main app. Guarantees the user always has a way back to the main
+  // screen even if a protocol screen opens unexpectedly.
+  const cancelSession = useCallback(() => {
+    resetSessionState();
   }, []);
 
   function resetSessionState() {
@@ -805,12 +827,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       saveJournal,
       extendFlowTwentyMinutes,
       dismissResumeFlowPrompt,
+      cancelSession,
       handleProtocolTrigger,
       isSessionBlocking,
     }),
     [
       activeProtocol,
       beginSession,
+      cancelSession,
       dismissResumeFlowPrompt,
       endSessionEarly,
       extendFlowTwentyMinutes,

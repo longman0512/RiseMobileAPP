@@ -78,6 +78,10 @@ export function ProtocolSummaryScreen({ route }: Props) {
         {saving ? <ActivityIndicator color="#000" /> : null}
         <Text className="text-black font-semibold">{saving ? 'Saving…' : 'Done'}</Text>
       </Pressable>
+
+      <Pressable className="mt-4 h-10 items-center justify-center" onPress={() => session.cancelSession()}>
+        <Text className="text-zinc-500 text-sm">Back to main</Text>
+      </Pressable>
     </View>
   );
 }

@@ -32,7 +32,10 @@ function iosForegroundPresentation(intrusive: boolean) {
 async function ensureIosNotificationPermission(): Promise<boolean> {
   if (Platform.OS !== 'ios') return true;
 
-  await requestNfcAccess();
+  // Note: do NOT prompt for NFC here. This runs during background-session setup
+  // at session start, and opening an NFC reader session would surface a second
+  // iOS "Ready to Scan" sheet on top of the session UI. NFC permission is primed
+  // during onboarding instead (PermissionsScreen -> requestNfcAndNotifications).
   const settings = await notifee.requestPermission();
   return (
     settings.authorizationStatus === AuthorizationStatus.AUTHORIZED ||

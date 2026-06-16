@@ -1,6 +1,6 @@
 import type { CoinType } from '../types/coins';
 
-export type EndScreen = 'summary' | 'journal';
+export type EndScreen = 'summary' | 'journal' | 'none';
 
 export type ProtocolConfig = {
   defaultMinutes: number;
@@ -9,8 +9,14 @@ export type ProtocolConfig = {
   hapticIntervalMinutes: number | null;
   allowsPause: boolean;
   allowsThoughtCapture: boolean;
-  /** End-of-session UI: LOCK IN → summary; FLOW / RESET → journal */
+  /**
+   * End-of-session UI: LOCK IN → summary; FLOW → journal; RESET → none
+   * (RESET captures reflection live during the session and returns straight to
+   * the main screen on end).
+   */
   endScreen: EndScreen;
+  /** RESET shows its reflection prompts during the active session. */
+  reflectionDuringSession?: boolean;
   hasJournal: boolean;
 };
 
@@ -42,8 +48,9 @@ export const PROTOCOL_CONFIG: Record<CoinType, ProtocolConfig> = {
     hapticIntervalMinutes: null,
     allowsPause: false,
     allowsThoughtCapture: false,
-    endScreen: 'journal',
-    hasJournal: true,
+    endScreen: 'none',
+    reflectionDuringSession: true,
+    hasJournal: false,
   },
 };
 

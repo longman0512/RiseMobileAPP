@@ -5,16 +5,20 @@ import { activateNativeFocusMode } from '../native/RiseFocusMode';
 import type { CoinType } from '../types/coins';
 import { COIN_LABELS } from '../types/coins';
 
-/** Try native activation (Phase 2 stub), then show a one-time Settings reminder. */
+/**
+ * Try native Focus activation (Phase 2 stub). The Settings reminder alert is
+ * intentionally NOT shown at session start anymore: it interrupted the
+ * tap-coin -> start flow with an "Open Focus settings / Continue" dialog. Focus
+ * is configured during onboarding (FocusSetupScreen) / Settings instead.
+ */
 export async function activateFocusModeOnSessionStart(protocol: CoinType): Promise<void> {
-  const activated = await activateNativeFocusMode(protocol);
-  if (activated) return;
-  remindFocusModeOnSessionStart(protocol);
+  await activateNativeFocusMode(protocol);
 }
 
 /**
  * Best-effort Focus Mode reminder until native FocusFilterIntent (Phase 2).
- * The OS Focus filter must be enabled manually in Settings.
+ * The OS Focus filter must be enabled manually in Settings. Kept available for
+ * Settings/onboarding use; no longer shown automatically at session start.
  */
 export function remindFocusModeOnSessionStart(protocol: CoinType): void {
   const label = COIN_LABELS[protocol];

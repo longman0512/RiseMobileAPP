@@ -32,6 +32,14 @@ export function ProtocolPreStartScreen({ route }: Props) {
 
   return (
     <View className="flex-1 bg-[#0D0D0D] px-6 py-12 justify-center">
+      <Pressable
+        onPress={() => session.cancelSession()}
+        hitSlop={12}
+        className="absolute top-14 right-6 h-10 w-10 items-center justify-center"
+      >
+        <Text className="text-zinc-400 text-2xl">✕</Text>
+      </Pressable>
+
       <Text className="text-white text-4xl font-bold text-center">{COIN_LABELS[protocol]}</Text>
 
       <Text className="text-zinc-400 text-center mt-10 text-sm">
@@ -67,7 +75,11 @@ export function ProtocolPreStartScreen({ route }: Props) {
       <View className="flex-1" />
 
       <Pressable className="h-14 rounded-2xl bg-white items-center justify-center" onPress={onBegin}>
-        <Text className="text-black font-semibold text-base">BEGIN</Text>
+        <Text className="text-black font-semibold text-base">START</Text>
+      </Pressable>
+
+      <Pressable className="mt-4 h-10 items-center justify-center" onPress={() => session.cancelSession()}>
+        <Text className="text-zinc-500 text-sm">Back to main</Text>
       </Pressable>
     </View>
   );

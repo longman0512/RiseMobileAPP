@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Linking } from 'react-native';
 
 import { isAuthDeepLink, parseProtocolFromUrl } from '../lib/protocolDeepLink';
@@ -9,16 +9,28 @@ import { useSession } from './SessionProvider';
 
 export function ProtocolDeepLinkHandler() {
   const { phase } = useAuth();
-  const { coins } = useCoins();
+  const { coins, loading } = useCoins();
   const { handleProtocolTrigger } = useSession();
 
-  const handleUrl = (url: string | null) => {
-    if (!url || isAuthDeepLink(url)) return;
+  // The iOS launch URL returned by getInitialURL() persists for the whole app
+  // lifetime, so it must be consumed exactly once. Without this guard the effect
+  // re-runs on every coins/phase change and re-opens PreStart after a session
+  // ends, trapping the user.
+  const initialUrlHandledRef = useRef(false);
 
-    const protocol = parseProtocolFromUrl(url);
+  // Decide ownership against the Supabase-synced coin list and start the flow.
+  // Only call this once coins have finished loading, otherwise a cold start
+  // evaluates against an empty list and falsely reports the coin as unregistered.
+  const triggerForProtocol = (protocol: ReturnType<typeof parseProtocolFromUrl>) => {
     if (!protocol) return;
 
     if (phase !== 'signedIn') {
+      queuePendingProtocol(protocol);
+      return;
+    }
+
+    // Coins not hydrated yet: queue and let the effect below replay once loaded.
+    if (loading) {
       queuePendingProtocol(protocol);
       return;
     }
@@ -27,24 +39,39 @@ export function ProtocolDeepLinkHandler() {
     handleProtocolTrigger(protocol, { hasRegisteredCoin: hasRegistered });
   };
 
+  const handleUrl = (url: string | null) => {
+    if (!url || isAuthDeepLink(url)) return;
+    triggerForProtocol(parseProtocolFromUrl(url));
+  };
+
+  // Replay any queued protocol once signed in AND coins have finished loading.
+  // This covers both the not-signed-in case and the cold-start race where the
+  // launch URL arrived before the coin list was hydrated.
   useEffect(() => {
-    if (phase !== 'signedIn') return;
+    if (phase !== 'signedIn' || loading) return;
 
     const pending = consumePendingProtocol();
-    if (pending) {
-      const hasRegistered = coins.some((c) => c.coin_type === pending && c.active);
-      handleProtocolTrigger(pending, { hasRegisteredCoin: hasRegistered });
-    }
-  }, [phase, coins, handleProtocolTrigger]);
+    if (!pending) return;
+
+    const hasRegistered = coins.some((c) => c.coin_type === pending && c.active);
+    handleProtocolTrigger(pending, { hasRegisteredCoin: hasRegistered });
+  }, [phase, loading, coins, handleProtocolTrigger]);
 
   useEffect(() => {
-    Linking.getInitialURL()
-      .then(handleUrl)
-      .catch(() => {});
+    // Consume the cold-start launch URL exactly once.
+    if (!initialUrlHandledRef.current) {
+      initialUrlHandledRef.current = true;
+      Linking.getInitialURL()
+        .then(handleUrl)
+        .catch(() => {});
+    }
 
+    // Warm taps deliver a fresh 'url' event each time; these are naturally
+    // one-shot and safe to handle directly.
     const sub = Linking.addEventListener('url', (event) => handleUrl(event.url));
     return () => sub.remove();
-  }, [handleProtocolTrigger, coins, phase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, loading, coins, handleProtocolTrigger]);
 
   return null;
 }
