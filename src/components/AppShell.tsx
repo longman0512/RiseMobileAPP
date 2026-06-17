@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 
 import { useAppBootstrap } from '../hooks/useAppBootstrap';
-import { navigationRef } from '../lib/navigationRef';
+import { flushPendingProtocolNavigation, navigationRef } from '../lib/navigationRef';
 import { RootNavigator } from '../navigation/RootNavigator';
 import { SplashScreen } from '../screens/common/SplashScreen';
 
@@ -12,7 +12,7 @@ export function AppShell() {
 
   return (
     <View style={styles.root}>
-      <NavigationContainer ref={navigationRef}>
+      <NavigationContainer ref={navigationRef} onReady={flushPendingProtocolNavigation}>
         <RootNavigator />
       </NavigationContainer>
       {showSplash ? <SplashScreen /> : null}
