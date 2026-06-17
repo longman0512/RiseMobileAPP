@@ -4,6 +4,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { setNfcBusy, startNfcListener } from '../../lib/nfc';
 import { supabase } from '../../lib/supabase';
+import {
+  hasFocusModeSelection,
+  isFocusModeAuthorized,
+  presentFocusModePicker,
+  requestFocusModeAuthorization,
+  showFocusModeSetupUnavailableAlert,
+} from '../../lib/focusMode';
 import { openFocusSettings } from '../../lib/focusSettings';
 import { openFlowPlaylist } from '../../lib/flowMusic';
 import { requestContactsPermission } from '../../lib/permissions';
@@ -36,6 +43,12 @@ export function SettingsScreen() {
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(
     () => new Set(priorityContactIds),
   );
+  const [screenTimeAuthorized, setScreenTimeAuthorized] = useState(false);
+  const [blockingSelections, setBlockingSelections] = useState<Record<'lockin' | 'flow', boolean>>({
+    lockin: false,
+    flow: false,
+  });
+  const [blockingBusy, setBlockingBusy] = useState<CoinType | null>(null);
 
   const email = session?.user?.email ?? '';
   const initialUsername = (session?.user?.user_metadata?.username as string | undefined) ?? '';
@@ -54,6 +67,45 @@ export function SettingsScreen() {
   useEffect(() => {
     setUsername(initialUsername);
   }, [initialUsername]);
+
+  const refreshBlockingStatus = useCallback(async () => {
+    const [authorized, lockin, flow] = await Promise.all([
+      isFocusModeAuthorized(),
+      hasFocusModeSelection('lockin'),
+      hasFocusModeSelection('flow'),
+    ]);
+    setScreenTimeAuthorized(authorized);
+    setBlockingSelections({ lockin, flow });
+  }, []);
+
+  useEffect(() => {
+    refreshBlockingStatus().catch(() => {});
+  }, [refreshBlockingStatus]);
+
+  const onChooseBlockingApps = useCallback(
+    async (protocol: 'lockin' | 'flow') => {
+      setBlockingBusy(protocol);
+      try {
+        let isAuthorized = screenTimeAuthorized;
+        if (!isAuthorized) {
+          isAuthorized = await requestFocusModeAuthorization();
+          setScreenTimeAuthorized(isAuthorized);
+        }
+        if (isAuthorized) {
+          const saved = await presentFocusModePicker(protocol);
+          if (!saved) {
+            showFocusModeSetupUnavailableAlert('picker');
+          }
+        } else {
+          showFocusModeSetupUnavailableAlert('authorization');
+        }
+        await refreshBlockingStatus();
+      } finally {
+        setBlockingBusy(null);
+      }
+    },
+    [refreshBlockingStatus, screenTimeAuthorized],
+  );
 
   const coinByType = useMemo(() => {
     const map = new Map<CoinType, string[]>();
@@ -351,6 +403,51 @@ export function SettingsScreen() {
           >
             <Text className="text-zinc-300 text-sm">Focus Mode settings</Text>
           </Pressable>
+        </View>
+
+        <View className="rounded-2xl border border-white/10 bg-zinc-950/60 p-4 mt-4">
+          <Text className="text-white text-base font-semibold mb-1">Focus & app blocking</Text>
+          <Text className="text-zinc-400 text-xs mb-3">
+            Configure iOS Screen Time shields for LOCK IN and FLOW. RESET does not block apps.
+          </Text>
+
+          <View className="gap-3">
+            {(['lockin', 'flow'] as const).map((type) => {
+              const configured = blockingSelections[type];
+              const isBusy = blockingBusy === type;
+              const description =
+                type === 'lockin'
+                  ? 'Block social media, YouTube/video, browsers, email, and messaging apps.'
+                  : 'Block social media, YouTube, Netflix, and streaming apps.';
+              return (
+                <View key={type} className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
+                  <View className="flex-row items-center justify-between gap-3">
+                    <View className="flex-1">
+                      <Text className="text-white font-semibold">{COIN_LABELS[type]}</Text>
+                      <Text className="text-zinc-500 text-xs mt-1">{description}</Text>
+                      <Text className={configured ? 'text-emerald-400 text-xs mt-2' : 'text-zinc-500 text-xs mt-2'}>
+                        {configured ? 'Configured' : 'Not configured'}
+                      </Text>
+                    </View>
+                    <Pressable
+                      className="h-10 px-4 rounded-xl border border-white/15 items-center justify-center"
+                      onPress={() => void onChooseBlockingApps(type)}
+                      disabled={blockingBusy != null}
+                    >
+                      <Text className="text-zinc-200 text-sm">
+                        {isBusy ? 'Opening...' : configured ? 'Edit' : 'Choose'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+
+          <Text className="text-zinc-600 text-xs mt-3 leading-5">
+            Priority contacts are handled by iOS Focus/notification settings; Family Controls can block
+            messaging apps as a whole, but cannot allow specific contacts inside Messages.
+          </Text>
         </View>
 
         <View className="rounded-2xl border border-white/10 bg-zinc-950/60 p-4 mt-4">

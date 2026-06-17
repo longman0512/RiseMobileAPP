@@ -10,7 +10,7 @@ import React, {
 import { Alert, AppState, type AppStateStatus, Vibration } from 'react-native';
 
 import { SessionResumeOverlay } from '../components/SessionResumeOverlay';
-import { activateFocusModeOnSessionStart } from '../lib/focusMode';
+import { deactivateFocusModeOnSessionEnd, syncFocusModeForProtocol } from '../lib/focusMode';
 import {
   enqueueOfflineSessionJob,
   flushOfflineSessionQueue,
@@ -244,6 +244,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (protocol === 'reset') {
       setResetInstructionIndex(0);
     }
+    void syncFocusModeForProtocol(protocol);
     navigateProtocolStack('Active', { protocol });
   }, []);
 
@@ -368,7 +369,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setSegments([]);
       timerSnapshotRef.current = null;
       startActiveSegment(activeProtocol, seconds);
-      void activateFocusModeOnSessionStart(activeProtocol);
       if (activeProtocol === 'flow') {
         void openFlowPlaylist(musicService);
       }
@@ -482,6 +482,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     });
 
     const endScreen = PROTOCOL_CONFIG[activeProtocol].endScreen;
+    void deactivateFocusModeOnSessionEnd();
 
     // RESET captures its reflection live during the session, so persist those
     // notes now and return straight to the main screen (no end reflection screen).
@@ -637,6 +638,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setActiveProtocol('flow');
     setSessionPhase('active');
     sessionStartedAt.current = new Date().toISOString();
+    void syncFocusModeForProtocol('flow');
     navigateProtocolStack('Active', { protocol: 'flow' });
   }, []);
 
@@ -655,6 +657,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   function resetSessionState() {
+    void deactivateFocusModeOnSessionEnd();
     setSessionPhase('idle');
     setActiveProtocol(null);
     setSummary(null);
