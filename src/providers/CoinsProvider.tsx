@@ -14,6 +14,8 @@ type CoinsContextValue = {
   needsCoinOnboarding: boolean;
   refresh: () => Promise<void>;
   registerCoin: (coinId: string, coinType: CoinType) => Promise<{ ok: true; coin: Coin } | { ok: false; message: string }>;
+  registerCoinStrict: (coinId: string, coinType: CoinType) => Promise<{ ok: true; coin: Coin } | { ok: false; message: string }>;
+  deleteCoin: (coinId: string) => Promise<{ ok: true; coin: Coin } | { ok: false; message: string }>;
   resolveCoinForSession: (coinId: string) => Promise<CoinType | null>;
   dismissCoinOnboarding: () => Promise<void>;
 };
@@ -21,9 +23,14 @@ type CoinsContextValue = {
 const CoinsContext = createContext<CoinsContextValue | null>(null);
 
 function mapRegisterError(message: string): string {
-  if (message.includes('already linked')) {
-    return COIN_ALREADY_LINKED_MESSAGE;
+  const lower = message.toLowerCase();
+  if (lower.includes('already linked')) {
+    return lower.includes('another account')
+      ? 'This coin is already linked to another account.'
+      : COIN_ALREADY_LINKED_MESSAGE;
   }
+  if (lower.includes('already have an active')) return message;
+  if (lower.includes('already registered as')) return message;
   return message;
 }
 
@@ -94,6 +101,49 @@ export function CoinsProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
 
+  const registerCoinStrict = useCallback(
+    async (coinId: string, coinType: CoinType) => {
+      const normalized = normalizeCoinId(coinId);
+      if (!normalized) {
+        return { ok: false as const, message: 'Could not read coin ID from tag.' };
+      }
+
+      const { data, error } = await supabase.rpc('register_coin_strict', {
+        p_coin_id: normalized,
+        p_coin_type: coinType,
+      });
+
+      if (error) {
+        return { ok: false as const, message: mapRegisterError(error.message) };
+      }
+
+      await refresh();
+      return { ok: true as const, coin: data as Coin };
+    },
+    [refresh],
+  );
+
+  const deleteCoin = useCallback(
+    async (coinId: string) => {
+      const normalized = normalizeCoinId(coinId);
+      if (!normalized) {
+        return { ok: false as const, message: 'Could not read coin ID.' };
+      }
+
+      const { data, error } = await supabase.rpc('delete_my_coin', {
+        p_coin_id: normalized,
+      });
+
+      if (error) {
+        return { ok: false as const, message: error.message };
+      }
+
+      await refresh();
+      return { ok: true as const, coin: data as Coin };
+    },
+    [refresh],
+  );
+
   const resolveCoinForSession = useCallback(async (coinId: string): Promise<CoinType | null> => {
     const normalized = normalizeCoinId(coinId);
     if (!normalized) return null;
@@ -127,10 +177,22 @@ export function CoinsProvider({ children }: { children: React.ReactNode }) {
       needsCoinOnboarding,
       refresh,
       registerCoin,
+      registerCoinStrict,
+      deleteCoin,
       resolveCoinForSession,
       dismissCoinOnboarding,
     }),
-    [loading, coins, needsCoinOnboarding, refresh, registerCoin, resolveCoinForSession, dismissCoinOnboarding],
+    [
+      loading,
+      coins,
+      needsCoinOnboarding,
+      refresh,
+      registerCoin,
+      registerCoinStrict,
+      deleteCoin,
+      resolveCoinForSession,
+      dismissCoinOnboarding,
+    ],
   );
 
   return <CoinsContext.Provider value={value}>{children}</CoinsContext.Provider>;

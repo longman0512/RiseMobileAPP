@@ -35,6 +35,24 @@ export function parseProtocolFromUrl(url: string): CoinType | null {
   }
 }
 
+export function parseProtocolUniversalLinkFromUrl(url: string): CoinType | null {
+  try {
+    const parsed = new URL(url);
+    const isUniversalLink =
+      parsed.protocol.toLowerCase() === 'https:' &&
+      UNIVERSAL_LINK_HOSTS.includes(parsed.hostname.toLowerCase());
+
+    if (!isUniversalLink) return null;
+
+    const match = parsed.pathname.match(PROTOCOL_PATH);
+    if (!match) return null;
+
+    return match[1].toLowerCase() as CoinType;
+  } catch {
+    return null;
+  }
+}
+
 export function isProtocolDeepLink(url: string): boolean {
   return parseProtocolFromUrl(url) !== null;
 }

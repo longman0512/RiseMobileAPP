@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { setNfcBusy, startNfcListener } from '../../lib/nfc';
+import { cancelNfcRequest, isNfcCancelError, readCoinRegistrationTagOnce, setNfcBusy } from '../../lib/nfc';
 import { supabase } from '../../lib/supabase';
 import {
   hasFocusModeSelection,
@@ -14,22 +14,23 @@ import {
 import { openFocusSettings } from '../../lib/focusSettings';
 import { openFlowPlaylist } from '../../lib/flowMusic';
 import { requestContactsPermission } from '../../lib/permissions';
+import { parseProtocolUniversalLinkFromUrl } from '../../lib/protocolDeepLink';
 import { useAuth } from '../../providers/AuthProvider';
 import { useCoins } from '../../providers/CoinsProvider';
 import { useUserPreferences, type MusicService } from '../../providers/UserPreferencesProvider';
-import { COIN_LABELS, COIN_TYPES, type CoinType } from '../../types/coins';
+import { COIN_LABELS, COIN_TYPES, type Coin, type CoinType } from '../../types/coins';
 import Contacts from 'react-native-contacts';
 import type { Contact } from 'react-native-contacts';
 
 type RegisterState =
   | { status: 'idle' }
-  | { status: 'listening'; coinType: CoinType }
-  | { status: 'registering'; coinType: CoinType };
+  | { status: 'scanning' }
+  | { status: 'registering' };
 
 export function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { session, refreshProfile } = useAuth();
-  const { coins, registerCoin, refresh: refreshCoins } = useCoins();
+  const { coins, registerCoinStrict, deleteCoin, refresh: refreshCoins } = useCoins();
   const {
     musicService,
     setMusicService,
@@ -61,8 +62,6 @@ export function SettingsScreen() {
   const [changingPassword, setChangingPassword] = useState(false);
 
   const [registerState, setRegisterState] = useState<RegisterState>({ status: 'idle' });
-  const stopNfcRef = useRef<(() => void) | null>(null);
-  const handlingTagRef = useRef(false);
 
   useEffect(() => {
     setUsername(initialUsername);
@@ -107,12 +106,12 @@ export function SettingsScreen() {
     [refreshBlockingStatus, screenTimeAuthorized],
   );
 
-  const coinByType = useMemo(() => {
-    const map = new Map<CoinType, string[]>();
+  const coinsByType = useMemo(() => {
+    const map = new Map<CoinType, Coin[]>();
     for (const type of COIN_TYPES) map.set(type, []);
     for (const c of coins) {
       if (!c.active) continue;
-      map.get(c.coin_type)?.push(c.coin_id);
+      map.get(c.coin_type)?.push(c);
     }
     return map;
   }, [coins]);
@@ -194,67 +193,93 @@ export function SettingsScreen() {
     }
   }, [currentPassword, email, newPassword]);
 
-  const stopListening = useCallback(async () => {
-    const stop = stopNfcRef.current;
-    stopNfcRef.current = null;
-    handlingTagRef.current = false;
+  const stopRegistrationScan = useCallback(async () => {
     setRegisterState({ status: 'idle' });
-    if (stop) {
-      try {
-        await stop();
-      } catch {
-        // ignore
-      }
-    }
+    await cancelNfcRequest();
     // Release the global NFC lock so the live coin-tap listener can resume.
     setNfcBusy(false);
   }, []);
 
   const beginRegister = useCallback(
-    async (coinType: CoinType) => {
-      await stopListening();
-      setRegisterState({ status: 'listening', coinType });
+    async () => {
+      await stopRegistrationScan();
+      setRegisterState({ status: 'scanning' });
       // Hold the global NFC lock so the live coin-tap listener stands down.
       setNfcBusy(true);
       try {
-        const stop = await startNfcListener((coinId) => {
-          if (handlingTagRef.current) return;
-          handlingTagRef.current = true;
-          setRegisterState({ status: 'registering', coinType });
-          registerCoin(coinId, coinType)
-            .then(async (result) => {
-              if (!result.ok) {
-                Alert.alert('Registration failed', result.message);
-                return;
-              }
-              Alert.alert('Registered', `${COIN_LABELS[coinType]} coin linked to your account.`);
-              await refreshCoins();
-              await stopListening();
-            })
-            .catch(() => {
-              Alert.alert('Registration failed', 'Unexpected error. Please try again.');
-            })
-            .finally(() => {
-              handlingTagRef.current = false;
-              setRegisterState((prev) => (prev.status === 'idle' ? prev : { status: 'idle' }));
-            });
-        });
+        const tag = await readCoinRegistrationTagOnce();
+        setRegisterState({ status: 'registering' });
 
-        stopNfcRef.current = stop;
+        if (!tag.ndefUrl) {
+          Alert.alert(
+            'Invalid coin URL',
+            'This coin does not have a readable NDEF URL. Please write the correct RISE URL to the coin and try again.',
+          );
+          return;
+        }
+
+        const coinType = parseProtocolUniversalLinkFromUrl(tag.ndefUrl);
+        if (!coinType) {
+          Alert.alert(
+            'Invalid coin URL',
+            `This coin URL is not valid for RISE:\n\n${tag.ndefUrl}\n\nUse https://nfc.officialrise.com/protocol/lockin, /flow, or /reset.`,
+          );
+          return;
+        }
+
+        const result = await registerCoinStrict(tag.coinId, coinType);
+        if (!result.ok) {
+          Alert.alert('Registration failed', result.message);
+          return;
+        }
+
+        Alert.alert('Registered', `${COIN_LABELS[coinType]} coin linked to your account.`);
+        await refreshCoins();
       } catch (e: unknown) {
+        if (isNfcCancelError(e)) return;
         const message = e instanceof Error ? e.message : 'NFC is unavailable.';
-        Alert.alert('NFC', message);
-        await stopListening();
+        Alert.alert('Registration failed', message);
+      } finally {
+        setRegisterState({ status: 'idle' });
+        setNfcBusy(false);
       }
     },
-    [registerCoin, refreshCoins, stopListening],
+    [refreshCoins, registerCoinStrict, stopRegistrationScan],
+  );
+
+  const onDeleteCoin = useCallback(
+    (coin: Coin) => {
+      Alert.alert(
+        `Delete ${COIN_LABELS[coin.coin_type]} coin?`,
+        'You can register a new coin for this mode after deleting this one.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              void (async () => {
+                const result = await deleteCoin(coin.coin_id);
+                if (!result.ok) {
+                  Alert.alert('Delete failed', result.message);
+                  return;
+                }
+                Alert.alert('Deleted', `${COIN_LABELS[coin.coin_type]} coin removed.`);
+                await refreshCoins();
+              })();
+            },
+          },
+        ],
+      );
+    },
+    [deleteCoin, refreshCoins],
   );
 
   useEffect(() => {
     return () => {
-      void stopListening();
+      void stopRegistrationScan();
     };
-  }, [stopListening]);
+  }, [stopRegistrationScan]);
 
   const canSaveUsername = useMemo(() => username.trim().length >= 3 && !savingUsername, [savingUsername, username]);
   const canChangePassword = useMemo(
@@ -453,42 +478,56 @@ export function SettingsScreen() {
         <View className="rounded-2xl border border-white/10 bg-zinc-950/60 p-4 mt-4">
           <Text className="text-white text-base font-semibold mb-1">Coins</Text>
           <Text className="text-zinc-400 text-xs mb-4">
-            Re-register coins by tapping them on the back of your phone.
+            Register coins from their NDEF URL. Each account can have one active coin per mode.
           </Text>
+
+          <Pressable
+            className={[
+              'h-12 rounded-xl items-center justify-center mb-4',
+              registerState.status === 'idle' ? 'bg-white' : 'bg-zinc-700',
+            ].join(' ')}
+            onPress={() => void beginRegister()}
+            disabled={registerState.status !== 'idle'}
+          >
+            <Text className={registerState.status === 'idle' ? 'text-black font-semibold' : 'text-zinc-200 font-semibold'}>
+              Register new Coin
+            </Text>
+          </Pressable>
 
           <View className="gap-3">
             {COIN_TYPES.map((type) => {
-              const ids = coinByType.get(type) ?? [];
-              const registered = ids.length > 0;
+              const registeredCoins = coinsByType.get(type) ?? [];
+              const registered = registeredCoins.length > 0;
               const label = COIN_LABELS[type];
-              const actionLabel = registered ? 'Re-register' : 'Register';
               return (
                 <View key={type} className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
                   <View className="flex-row items-center justify-between">
-                    <View>
+                    <View className="flex-1 pr-3">
                       <Text className="text-white font-semibold">{label}</Text>
                       <Text className="text-zinc-400 text-xs mt-1">
-                        {registered ? `Registered (${ids.length})` : 'Not registered'}
+                        {registered ? `Registered (${registeredCoins.length})` : 'Not registered'}
                       </Text>
                     </View>
-                    <Pressable
-                      className="h-10 px-4 rounded-xl bg-white items-center justify-center"
-                      onPress={() => void beginRegister(type)}
-                      disabled={registerState.status !== 'idle'}
-                    >
-                      <Text className="text-black font-semibold text-sm">{actionLabel}</Text>
-                    </Pressable>
+                    {registered ? (
+                      <Pressable
+                        className="h-10 px-4 rounded-xl border border-red-500/40 items-center justify-center"
+                        onPress={() => onDeleteCoin(registeredCoins[0])}
+                        disabled={registerState.status !== 'idle'}
+                      >
+                        <Text className="text-red-300 font-semibold text-sm">Delete</Text>
+                      </Pressable>
+                    ) : null}
                   </View>
 
                   {registered ? (
                     <View className="mt-3 gap-1">
-                      {ids.slice(0, 3).map((id) => (
-                        <Text key={id} className="text-zinc-500 text-xs">
-                          {id}
+                      {registeredCoins.slice(0, 3).map((coin) => (
+                        <Text key={coin.coin_id} className="text-zinc-500 text-xs">
+                          {coin.coin_id}
                         </Text>
                       ))}
-                      {ids.length > 3 ? (
-                        <Text className="text-zinc-500 text-xs">+{ids.length - 3} more</Text>
+                      {registeredCoins.length > 3 ? (
+                        <Text className="text-zinc-500 text-xs">+{registeredCoins.length - 3} more</Text>
                       ) : null}
                     </View>
                   ) : null}
@@ -549,10 +588,10 @@ export function SettingsScreen() {
         <View className="absolute inset-0 items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}>
           <View className="w-[86%] rounded-2xl border border-white/10 bg-zinc-950 p-5">
             <Text className="text-white text-lg font-semibold text-center">
-              {registerState.status === 'registering' ? 'Registering…' : 'Ready to scan'}
+              {registerState.status === 'registering' ? 'Registering…' : 'Tap your Coin Please'}
             </Text>
             <Text className="text-zinc-400 text-center mt-2 leading-5">
-              Tap your {COIN_LABELS[registerState.coinType]} coin on the back of your phone.
+              Hold the coin near the back of your phone. The app will read its UID and RISE URL.
             </Text>
             <View className="items-center mt-5">
               {registerState.status === 'registering' ? (
@@ -564,7 +603,7 @@ export function SettingsScreen() {
               )}
             </View>
 
-            <Pressable className="mt-6 h-12 rounded-xl bg-white items-center justify-center" onPress={() => void stopListening()}>
+            <Pressable className="mt-6 h-12 rounded-xl bg-white items-center justify-center" onPress={() => void stopRegistrationScan()}>
               <Text className="text-black font-semibold">Cancel</Text>
             </Pressable>
           </View>

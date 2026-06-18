@@ -1,5 +1,12 @@
 import { Platform } from 'react-native';
-import NfcManager, { NfcAdapter, NfcEvents, NfcTech, type TagEvent } from 'react-native-nfc-manager';
+import NfcManager, {
+  Ndef,
+  NfcAdapter,
+  NfcEvents,
+  NfcTech,
+  type NdefRecord,
+  type TagEvent,
+} from 'react-native-nfc-manager';
 
 /**
  * Global "an NFC session is in progress" flag. Only one NFC session can exist at
@@ -72,6 +79,32 @@ export function normalizeCoinId(raw: string | number[] | undefined | null): stri
   const trimmed = String(raw).trim().replace(/[^0-9a-fA-F]/g, '');
   if (!trimmed) return null;
   return trimmed.toUpperCase();
+}
+
+function decodeNdefUrl(records: NdefRecord[] | undefined | null): string | null {
+  if (!records?.length) return null;
+
+  for (const record of records) {
+    const payload = Uint8Array.from(record.payload ?? []);
+    try {
+      if (Ndef.isType(record, Ndef.TNF_WELL_KNOWN, Ndef.RTD_URI)) {
+        const url = Ndef.uri.decodePayload(payload).trim();
+        if (url) return url;
+      }
+      if (Ndef.isType(record, Ndef.TNF_WELL_KNOWN, Ndef.RTD_TEXT)) {
+        const text = Ndef.text.decodePayload(payload).trim();
+        if (/^https?:\/\//i.test(text)) return text;
+      }
+      if (record.tnf === Ndef.TNF_ABSOLUTE_URI) {
+        const url = Ndef.util.bytesToString(payload).trim();
+        if (url) return url;
+      }
+    } catch {
+      // Ignore malformed records and keep looking for a usable URL.
+    }
+  }
+
+  return null;
 }
 
 export async function isNfcSupported(): Promise<boolean> {
@@ -239,5 +272,45 @@ export async function readCoinIdOnce(): Promise<string> {
     } catch {
       // ignore
     }
+  }
+}
+
+export type CoinRegistrationTag = {
+  coinId: string;
+  ndefUrl: string | null;
+};
+
+export async function cancelNfcRequest(): Promise<void> {
+  try {
+    await NfcManager.cancelTechnologyRequest();
+  } catch {
+    // ignore
+  }
+}
+
+/** One-shot foreground scan for Settings registration: reads UID and NDEF URL. */
+export async function readCoinRegistrationTagOnce(): Promise<CoinRegistrationTag> {
+  const supported = await initNfc();
+  if (!supported) {
+    throw new Error('NFC is not supported on this device.');
+  }
+
+  const tech = Platform.OS === 'ios' ? IOS_TAG_TECHS : NfcTech.Ndef;
+  try {
+    await NfcManager.requestTechnology(tech, {
+      alertMessage: 'Hold your coin near the back of your phone',
+    });
+    const tag = await NfcManager.getTag();
+    const coinId = normalizeCoinId(tag?.id);
+    if (!coinId) {
+      throw new Error('Could not read coin ID from tag.');
+    }
+
+    return {
+      coinId,
+      ndefUrl: decodeNdefUrl(tag?.ndefMessage),
+    };
+  } finally {
+    await cancelNfcRequest();
   }
 }
