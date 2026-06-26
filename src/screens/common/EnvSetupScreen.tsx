@@ -3,7 +3,7 @@ import { ScrollView, Text, View } from 'react-native';
 
 export function EnvSetupScreen() {
   return (
-    <ScrollView className="flex-1 bg-black" contentContainerClassName="px-6 py-14">
+    <ScrollView className="flex-1 bg-[#0A0A0C]" contentContainerClassName="px-6 py-14">
       <Text className="text-white text-2xl font-bold">Configuration required</Text>
       <Text className="text-zinc-400 mt-4 leading-6">
         Supabase credentials are missing. The app cannot start auth until they are set.

@@ -1,6 +1,7 @@
 import type { CoinType } from '../types/coins';
 
 const PROTOCOL_PATH = /^\/protocol\/(lockin|flow|reset)\/?$/i;
+let protocolDeepLinkSuppressionCount = 0;
 
 /**
  * Hosts that serve the Universal Link AASA file and the per-type coin links
@@ -57,6 +58,18 @@ export function isProtocolDeepLink(url: string): boolean {
   return parseProtocolFromUrl(url) !== null;
 }
 
+export function suppressProtocolDeepLinks(): () => void {
+  protocolDeepLinkSuppressionCount += 1;
+
+  return () => {
+    protocolDeepLinkSuppressionCount = Math.max(0, protocolDeepLinkSuppressionCount - 1);
+  };
+}
+
+export function areProtocolDeepLinksSuppressed(): boolean {
+  return protocolDeepLinkSuppressionCount > 0;
+}
+
 export function isAuthDeepLink(url: string): boolean {
   return url.startsWith('risemobile://');
 }
@@ -70,5 +83,6 @@ export function simulateProtocolTap(
   handleProtocolTrigger: (protocol: CoinType, options?: { hasRegisteredCoin?: boolean }) => void,
   options?: { hasRegisteredCoin?: boolean },
 ): void {
+  if (areProtocolDeepLinksSuppressed()) return;
   handleProtocolTrigger(protocol, options);
 }

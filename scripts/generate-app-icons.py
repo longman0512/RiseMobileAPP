@@ -13,6 +13,10 @@ SOURCE = ASSETS / "apple-icon.png"
 
 IOS_ICONSET = ROOT / "ios" / "RiseMobile" / "Images.xcassets" / "AppIcon.appiconset"
 ANDROID_RES = ROOT / "android" / "app" / "src" / "main" / "res"
+STORE_ASSETS = ROOT / "store-assets"
+
+# Brand background — matches app shell (#0A0A0C).
+BRAND_BG = (10, 10, 12)
 
 IOS_SLOTS = [
     ("Icon-40.png", 40, "iphone", "20x20", "2x", None),
@@ -71,9 +75,26 @@ def resize(img: Image.Image, size: int) -> Image.Image:
     return img.resize((size, size), Image.Resampling.LANCZOS)
 
 
+def replace_near_black_bg(img: Image.Image, bg: tuple[int, int, int]) -> Image.Image:
+    """Map opaque near-black pixels to brand background (keeps white/gold logo)."""
+    rgba = img.convert("RGBA")
+    pixels = rgba.load()
+    for y in range(rgba.height):
+        for x in range(rgba.width):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha > 0 and red < 24 and green < 24 and blue < 24:
+                pixels[x, y] = (*bg, 255)
+    return rgba
+
+
 def dark_variant(img: Image.Image) -> Image.Image:
-    """White logo on black — matches apple-icon / icon-light."""
-    return img
+    """White logo on brand background (#0A0A0C)."""
+    logo = replace_near_black_bg(img, BRAND_BG)
+    size = max(logo.size)
+    canvas = Image.new("RGBA", (size, size), (*BRAND_BG, 255))
+    offset = ((size - logo.width) // 2, (size - logo.height) // 2)
+    canvas.paste(logo, offset, logo)
+    return canvas
 
 
 def light_variant(img: Image.Image) -> Image.Image:
@@ -88,7 +109,7 @@ def light_variant(img: Image.Image) -> Image.Image:
 def save_png(img: Image.Image, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if img.mode == "RGBA":
-        flat = Image.new("RGB", img.size, (0, 0, 0))
+        flat = Image.new("RGB", img.size, BRAND_BG)
         flat.paste(img, mask=img.split()[3])
         flat.save(path, "PNG", optimize=True)
     else:
@@ -98,6 +119,34 @@ def save_png(img: Image.Image, path: Path) -> None:
 def save_png_alpha(img: Image.Image, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(path, "PNG", optimize=True)
+
+
+def composite_on_background(img: Image.Image, size: tuple[int, int], bg: tuple[int, int, int]) -> Image.Image:
+    """Center-fit RGBA logo on a solid RGB canvas."""
+    canvas = Image.new("RGBA", size, (*bg, 255))
+    inner = min(size) * 72 // 100
+    fitted = ImageOps.contain(img.convert("RGBA"), (inner, inner), Image.Resampling.LANCZOS)
+    offset = ((size[0] - fitted.width) // 2, (size[1] - fitted.height) // 2)
+    canvas.paste(fitted, offset, fitted)
+    return canvas.convert("RGB")
+
+
+def generate_store_assets(source: Image.Image) -> None:
+    """App Store Connect + Google Play Console listing assets."""
+    icon = dark_variant(source)
+    STORE_ASSETS.mkdir(parents=True, exist_ok=True)
+
+    # Apple App Store Connect: 1024×1024, RGB, no rounded corners or transparency.
+    apple_icon = resize(icon, 1024)
+    save_png(apple_icon, STORE_ASSETS / "apple-app-store-icon-1024.png")
+
+    # Google Play: high-res launcher icon (512×512).
+    play_icon = resize(icon, 512)
+    save_png(play_icon, STORE_ASSETS / "google-play-icon-512.png")
+
+    # Google Play: feature graphic banner (1024×500, required for store listing).
+    feature = composite_on_background(icon, (1024, 500), BRAND_BG)
+    save_png(feature, STORE_ASSETS / "google-play-feature-graphic-1024x500.png")
 
 
 def generate_ios(source: Image.Image) -> None:
@@ -169,11 +218,15 @@ def main() -> None:
     if not SOURCE.is_file():
         raise SystemExit(f"Missing source icon: {SOURCE}")
     source = load_source()
-    generate_ios(source)
-    generate_android(source)
-    generate_android_notification(source)
+    normalized = dark_variant(source)
+    save_png_alpha(normalized, SOURCE)
+    generate_ios(normalized)
+    generate_android(normalized)
+    generate_android_notification(normalized)
+    generate_store_assets(normalized)
     print(
-        "Generated iOS AppIcon.appiconset, Android launcher mipmaps, and notification icons from",
+        "Generated iOS AppIcon.appiconset, Android launcher mipmaps, notification icons,",
+        "and store-assets/ from",
         SOURCE,
     )
 

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Transparent icon so API 31+ splash shows black only (logo comes from React SplashScreen). -->
+<!-- Transparent icon so API 31+ splash shows background only (logo comes from React SplashScreen). -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <size

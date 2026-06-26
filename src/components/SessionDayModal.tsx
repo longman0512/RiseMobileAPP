@@ -45,7 +45,7 @@ export function SessionDayModal({ visible, date, sessions, onClose }: Props) {
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View className="flex-1 bg-black/80 justify-end">
+      <View className="flex-1 justify-end" style={{ backgroundColor: 'rgba(10,10,12,0.8)' }}>
         <View className="bg-[#141414] rounded-t-3xl border border-white/10 max-h-[75%]">
           <View className="flex-row items-center justify-between px-6 pt-5 pb-3 border-b border-white/10">
             <Text className="text-white text-lg font-semibold">{formatModalDate(date)}</Text>

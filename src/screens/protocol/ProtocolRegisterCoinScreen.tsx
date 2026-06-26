@@ -14,7 +14,7 @@ export function ProtocolRegisterCoinScreen({ route }: Props) {
   const navigation = useNavigation();
 
   return (
-    <View className="flex-1 bg-[#0D0D0D] px-6 py-16 justify-center">
+    <View className="flex-1 bg-[#0A0A0C] px-6 py-16 justify-center">
       <Text className="text-white text-2xl font-bold text-center">Register this coin first</Text>
       <Text className="text-zinc-400 text-center mt-4">
         Link your {COIN_LABELS[protocol]} coin in Settings before starting a session.

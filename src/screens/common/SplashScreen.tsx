@@ -15,7 +15,7 @@ export function SplashScreen() {
   const logoSize = Math.min(160, Math.round(contentHeight * 0.14));
 
   return (
-    <View className="absolute inset-0 bg-black" pointerEvents="auto">
+    <View className="absolute inset-0" style={{ backgroundColor: '#0A0A0C' }} pointerEvents="auto">
       <Image
         source={LOGO}
         accessibilityLabel="RISE"

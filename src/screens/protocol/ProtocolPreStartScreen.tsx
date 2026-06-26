@@ -31,7 +31,7 @@ export function ProtocolPreStartScreen({ route }: Props) {
   };
 
   return (
-    <View className="flex-1 bg-[#0D0D0D] px-6 py-12 justify-center">
+    <View className="flex-1 bg-[#0A0A0C] px-6 py-12 justify-center">
       <Pressable
         onPress={() => session.cancelSession()}
         hitSlop={12}

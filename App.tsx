@@ -40,7 +40,7 @@ export default function App() {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
         <SafeAreaProvider>
-          <StatusBar barStyle="light-content" backgroundColor="#0D0D0D" />
+          <StatusBar barStyle="light-content" backgroundColor="#0A0A0C" />
           <EnvSetupWithSplash />
           <AppToast />
         </SafeAreaProvider>
@@ -51,7 +51,7 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <StatusBar barStyle="light-content" backgroundColor="#0D0D0D" />
+        <StatusBar barStyle="light-content" backgroundColor="#0A0A0C" />
         <AuthProvider>
           <AuthDeepLinkHandler />
           <CoinsProvider>

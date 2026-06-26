@@ -20,7 +20,7 @@ export function ScanningScreen() {
   }, [navigation]);
 
   return (
-    <View className="flex-1 bg-black items-center justify-center px-6">
+    <View className="flex-1 bg-[#0A0A0C] items-center justify-center px-6">
       <View className="items-center">
         <View className="w-40 h-40 rounded-full border border-white/10 items-center justify-center">
           <View className={deviceFound ? 'w-20 h-20 rounded-full bg-white' : 'w-20 h-20 rounded-full bg-white/20'} />

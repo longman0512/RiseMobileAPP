@@ -288,7 +288,7 @@ export function SettingsScreen() {
   );
 
   return (
-    <View className="flex-1 bg-black">
+    <View className="flex-1 bg-[#0A0A0C]">
       <ScrollView
         className="flex-1"
         contentContainerStyle={{
@@ -539,7 +539,7 @@ export function SettingsScreen() {
       </ScrollView>
 
       {editingContacts ? (
-        <View className="absolute inset-0 bg-black/90 px-4 pt-14 pb-8">
+        <View className="absolute inset-0 px-4 pt-14 pb-8" style={{ backgroundColor: 'rgba(10,10,12,0.9)' }}>
           <Text className="text-white text-xl font-bold text-center mb-4">Priority contacts</Text>
           {contactsLoading ? (
             <ActivityIndicator color="#fff" className="mt-8" />

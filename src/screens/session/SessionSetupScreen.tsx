@@ -14,7 +14,7 @@ export function SessionSetupScreen() {
   const canStart = useMemo(() => minutes > 0, [minutes]);
 
   return (
-    <View className="flex-1 bg-black px-6 py-10">
+    <View className="flex-1 bg-[#0A0A0C] px-6 py-10">
       <Text className="text-white text-3xl font-bold">Session setup</Text>
       <Text className="text-zinc-400 mt-2">Choose a focus duration.</Text>
 

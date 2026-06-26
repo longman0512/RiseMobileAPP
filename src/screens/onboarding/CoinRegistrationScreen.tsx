@@ -1,74 +1,82 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Check } from 'lucide-react-native';
+import LinearGradient from 'react-native-linear-gradient';
 
 import { setNfcBusy, startNfcListener } from '../../lib/nfc';
+import { suppressProtocolDeepLinks } from '../../lib/protocolDeepLink';
 import { showErrorToast, showSuccessToast } from '../../lib/toast';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useNavigation } from '@react-navigation/native';
-
 import type { OnboardingStackParamList } from '../../navigation/onboarding/OnboardingNavigator';
 import { useCoins } from '../../providers/CoinsProvider';
 import { COIN_LABELS, COIN_TYPES, type CoinType } from '../../types/coins';
 
-type Step = 'intro' | CoinType | 'done';
+type Step = CoinType | 'done';
+
+const COIN_META: Record<CoinType, { detail: string; colors: [string, string, string]; accent: string }> = {
+  lockin: {
+    detail: 'Brushed steel · Deep focus',
+    colors: ['#D7DBE0', '#9BA1A9', '#6F757D'],
+    accent: '#C0C4CC',
+  },
+  flow: {
+    detail: 'Polished brass · Creative focus',
+    colors: ['#F0D88A', '#C9A24B', '#8F6F2B'],
+    accent: '#E8C56A',
+  },
+  reset: {
+    detail: 'Matte copper · Recovery',
+    colors: ['#E09A6B', '#C0703F', '#82471F'],
+    accent: '#D4855A',
+  },
+};
+
+function getRegisteredTypes(coins: ReturnType<typeof useCoins>['coins']) {
+  const registered = new Set<CoinType>();
+  for (const coin of coins) {
+    if (coin.active) registered.add(coin.coin_type);
+  }
+  return registered;
+}
+
+function getFirstPendingType(registeredTypes: Set<CoinType>): Step {
+  return COIN_TYPES.find((type) => !registeredTypes.has(type)) ?? 'done';
+}
 
 export function CoinRegistrationScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<OnboardingStackParamList>>();
   const { coins, registerCoin } = useCoins();
 
-  const [step, setStep] = useState<Step>('intro');
+  const [registeredTypes, setRegisteredTypes] = useState<Set<CoinType>>(() => getRegisteredTypes(coins));
+  const [step, setStep] = useState<Step>(() => getFirstPendingType(getRegisteredTypes(coins)));
   const [listening, setListening] = useState(false);
   const [registering, setRegistering] = useState(false);
-  const [registeredTypes, setRegisteredTypes] = useState<Set<CoinType>>(() => {
-    const initial = new Set<CoinType>();
-    for (const c of coins) {
-      if (c.active) initial.add(c.coin_type);
-    }
-    return initial;
-  });
-
-  useEffect(() => {
-    setRegisteredTypes((prev) => {
-      const next = new Set(prev);
-      for (const c of coins) {
-        if (c.active) next.add(c.coin_type);
-      }
-      return next;
-    });
-  }, [coins]);
-
-  const activeCoins = useMemo(() => coins.filter((c) => c.active), [coins]);
-
-  const coinIdForStep =
-    step !== 'intro' && step !== 'done'
-      ? (activeCoins.find((c) => c.coin_type === step)?.coin_id ?? null)
-      : null;
 
   const stopNfcRef = useRef<(() => void) | null>(null);
   const handlingTagRef = useRef(false);
 
-  const coinStepIndex = step === 'intro' || step === 'done' ? -1 : COIN_TYPES.indexOf(step);
   const registeredCount = registeredTypes.size;
+  const allRegistered = registeredCount === COIN_TYPES.length;
+  const currentCoinType = step === 'done' ? getFirstPendingType(registeredTypes) : step;
+  const currentLabel = currentCoinType === 'done' ? 'coins' : COIN_LABELS[currentCoinType];
 
-  const title = useMemo(() => {
-    if (step === 'intro') return 'Let\u2019s register your coins.';
-    if (step === 'done') {
-      if (registeredCount === 3) return "Your three coins are registered. You're ready.";
-      if (registeredCount === 0) return "You're ready.";
-      return `Registered ${registeredCount} of 3 coins. You're ready.`;
-    }
-    return `Tap your ${COIN_LABELS[step]} coin on the back of your phone.`;
-  }, [step, registeredCount]);
+  useFocusEffect(
+    useCallback(() => {
+      // Registration needs the foreground NFC UID scan. Coin Universal Links
+      // should not open protocol PreStart while this screen owns the tap.
+      return suppressProtocolDeepLinks();
+    }, []),
+  );
 
-  const subtitle = useMemo(() => {
-    if (step === 'intro') {
-      return 'Register each coin with a quick tap. You can skip any coin you do not have yet.';
-    }
-    if (step === 'done') return 'You can register more coins later in Settings.';
-    if (listening) return 'Listening for NFC…';
-    return `Step ${coinStepIndex + 1} of 3`;
-  }, [step, listening, coinStepIndex]);
+  useEffect(() => {
+    const next = getRegisteredTypes(coins);
+    setRegisteredTypes(next);
+    setStep((current) => {
+      if (current !== 'done' && !next.has(current)) return current;
+      return getFirstPendingType(next);
+    });
+  }, [coins]);
 
   const handleTag = useCallback(
     async (coinId: string, coinType: CoinType) => {
@@ -81,25 +89,21 @@ export function CoinRegistrationScreen() {
           showErrorToast('Registration failed', result.message);
           return;
         }
-        setRegisteredTypes((prev) => new Set(prev).add(coinType));
-        showSuccessToast('Registered', `${COIN_LABELS[coinType]} coin linked to your account.`);
 
-        const idx = COIN_TYPES.indexOf(coinType);
-        if (idx < COIN_TYPES.length - 1) {
-          setTimeout(() => setStep(COIN_TYPES[idx + 1]), 500);
-        } else {
-          setTimeout(() => setStep('done'), 500);
-        }
+        const next = new Set(registeredTypes).add(coinType);
+        setRegisteredTypes(next);
+        setStep(getFirstPendingType(next));
+        showSuccessToast('Registered', `${COIN_LABELS[coinType]} coin linked to your account.`);
       } finally {
         setRegistering(false);
         handlingTagRef.current = false;
       }
     },
-    [registerCoin],
+    [registerCoin, registeredTypes],
   );
 
   useEffect(() => {
-    if (step === 'intro' || step === 'done') {
+    if (step === 'done' || registeredTypes.has(step)) {
       setListening(false);
       return;
     }
@@ -113,8 +117,8 @@ export function CoinRegistrationScreen() {
         // while onboarding registration owns the NFC session.
         setNfcBusy(true);
         const stop = await startNfcListener((coinId) => {
-          if (!cancelled && COIN_TYPES.includes(currentStep as CoinType)) {
-            void handleTag(coinId, currentStep as CoinType);
+          if (!cancelled) {
+            void handleTag(coinId, currentStep);
           }
         });
         if (cancelled) {
@@ -142,132 +146,289 @@ export function CoinRegistrationScreen() {
       if (stop) void stop();
       setNfcBusy(false);
     };
-  }, [step, handleTag]);
-
-  const goNextCoinStep = () => {
-    if (step === 'intro') {
-      setStep(COIN_TYPES[0]);
-      return;
-    }
-    if (step === 'done') return;
-    const idx = COIN_TYPES.indexOf(step);
-    if (idx < COIN_TYPES.length - 1) {
-      setStep(COIN_TYPES[idx + 1]);
-    } else {
-      setStep('done');
-    }
-  };
+  }, [step, registeredTypes, handleTag]);
 
   const goToFocusSetup = () => {
     navigation.navigate('FocusSetup');
   };
 
-  const onIntroContinue = () => {
-    setStep(COIN_TYPES[0]);
-  };
-
   return (
-    <View className="flex-1 bg-black px-6">
-      <View className="flex-1 justify-center">
-        {step !== 'intro' && step !== 'done' && (
-          <View className="flex-row justify-center gap-2 mb-8">
-            {COIN_TYPES.map((type) => {
-              const done = registeredTypes.has(type);
-              const active = type === step;
-              return (
-                <View
-                  key={type}
-                  className={[
-                    'h-2 flex-1 rounded-full',
-                    done ? 'bg-white' : active ? 'bg-zinc-400' : 'bg-zinc-800',
-                  ].join(' ')}
-                  accessibilityLabel={`${COIN_LABELS[type]}${done ? ' registered' : ''}`}
-                />
-              );
-            })}
-          </View>
-        )}
+    <View style={styles.root}>
+      <View style={styles.content}>
+        <View style={styles.hero}>
+          <Text style={styles.eyebrow}>SETUP · 1 OF 2</Text>
+          <Text style={styles.title}>
+            Pair your{'\n'}
+            <Text style={styles.titleLight}>coins.</Text>
+          </Text>
+          <Text style={styles.subtitle}>
+            Hold each coin against the top of your iPhone. Once registered, a tap is all it takes.
+          </Text>
+        </View>
 
-        <Text className="text-white text-3xl font-bold text-center">{title}</Text>
-        <Text className="text-zinc-400 text-center mt-3 leading-6">{subtitle}</Text>
+        <View style={styles.coinList}>
+          {COIN_TYPES.map((type) => {
+            const done = registeredTypes.has(type);
+            const active = step === type && !done;
+            const meta = COIN_META[type];
 
-        {step === 'intro' && activeCoins.length > 0 ? (
-          <View className="mt-8 gap-3 w-full">
-            {activeCoins.map((coin) => (
+            return (
               <View
-                key={coin.coin_id}
-                className="rounded-xl border border-white/10 bg-zinc-900/40 px-4 py-3"
+                key={type}
+                style={[styles.coinRow, active ? styles.coinRowActive : null]}
+                accessibilityLabel={`${COIN_LABELS[type]} ${done ? 'paired' : active ? 'waiting' : 'not paired'}`}
               >
-                <Text className="text-zinc-400 text-sm">{COIN_LABELS[coin.coin_type]}</Text>
-                <Text className="text-zinc-500 text-xs mt-1">your registered coin</Text>
-                <Text className="text-white text-xs font-mono mt-2" selectable>
-                  {coin.coin_id}
-                </Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
-
-        {step !== 'intro' && step !== 'done' && (
-          <View className="mt-10 items-center">
-            {registeredTypes.has(step) ? (
-              <View className="items-center">
-                <View className="h-20 w-20 rounded-full bg-white/10 items-center justify-center">
-                  <Check size={40} color="#ffffff" strokeWidth={2.5} />
+                <LinearGradient colors={meta.colors} style={[styles.coin, !done && !active ? styles.coinDim : null]}>
+                  <View style={styles.coinInner} />
+                </LinearGradient>
+                <View style={styles.coinMeta}>
+                  <Text style={styles.coinName}>{COIN_LABELS[type]}</Text>
+                  <Text style={styles.coinSub}>{meta.detail}</Text>
                 </View>
-                {coinIdForStep ? (
-                  <View className="mt-6 items-center px-4">
-                    <Text className="text-zinc-500 text-xs">your registered coin</Text>
-                    <Text className="text-white text-xs font-mono mt-2 text-center" selectable>
-                      {coinIdForStep}
+                <View style={styles.stateWrap}>
+                  {done ? (
+                    <View style={styles.doneWrap}>
+                      <Text style={styles.doneText}>PAIRED</Text>
+                      <Check size={12} color="#22C55E" strokeWidth={3} />
+                    </View>
+                  ) : (
+                    <Text style={[styles.waitText, active ? { color: meta.accent } : null]}>
+                      {active && registering ? 'PAIRING...' : 'WAITING...'}
                     </Text>
-                  </View>
-                ) : null}
+                  )}
+                </View>
               </View>
-            ) : registering ? (
-              <ActivityIndicator size="large" color="#ffffff" />
-            ) : (
-              <View className="h-20 w-20 rounded-full border-2 border-dashed border-white/30 items-center justify-center">
-                <Text className="text-white/50 text-xs text-center px-2">NFC</Text>
-              </View>
-            )}
+            );
+          })}
+        </View>
+
+        <View style={styles.scanHint}>
+          <View style={styles.nfcPulse}>
+            <View style={styles.nfcRingOuter} />
+            <View style={styles.nfcRingInner} />
           </View>
-        )}
+          <Text style={styles.scanCopy}>
+            {allRegistered ? (
+              'All three coins are paired. Continue to finish setup.'
+            ) : (
+              <>
+                Hold the <Text style={styles.scanStrong}>{currentLabel}</Text> coin near the top edge of your phone.
+              </>
+            )}
+          </Text>
+          {registering ? <ActivityIndicator color="#F5F5F7" style={styles.scanSpinner} /> : null}
+        </View>
       </View>
 
-      <View className="pb-10 gap-3">
-        {step === 'intro' && (
-          <Pressable className="h-12 rounded-xl bg-white items-center justify-center" onPress={onIntroContinue}>
-            <Text className="text-black font-semibold">Get started</Text>
-          </Pressable>
-        )}
-
-        {step !== 'intro' && step !== 'done' && (
-          <>
-            <Pressable
-              className="h-12 rounded-xl bg-white items-center justify-center"
-              onPress={goNextCoinStep}
-              disabled={registering}
-            >
-              <Text className="text-black font-semibold">
-                {registeredTypes.has(step) ? 'Next coin' : 'Skip this coin'}
-              </Text>
-            </Pressable>
-          </>
-        )}
-
-        {step === 'done' && (
-          <Pressable className="h-12 rounded-xl bg-white items-center justify-center" onPress={goToFocusSetup}>
-            <Text className="text-black font-semibold">Continue</Text>
-          </Pressable>
-        )}
-
-        {step !== 'intro' && step !== 'done' && (
-          <Pressable className="h-12 rounded-xl items-center justify-center" onPress={goToFocusSetup}>
-            <Text className="text-zinc-400 font-semibold">Skip remaining setup</Text>
-          </Pressable>
-        )}
+      <View style={styles.footer}>
+        <Pressable
+          style={[styles.continueButton, !allRegistered ? styles.continueButtonDisabled : null]}
+          onPress={goToFocusSetup}
+          disabled={!allRegistered}
+        >
+          <Text style={[styles.continueText, !allRegistered ? styles.continueTextDisabled : null]}>Continue</Text>
+        </Pressable>
+        <Pressable style={styles.pairLaterButton} onPress={goToFocusSetup}>
+          <Text style={styles.pairLaterText}>Pair later</Text>
+        </Pressable>
       </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: '#0A0A0C',
+    paddingHorizontal: 28,
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  hero: {
+    marginBottom: 32,
+  },
+  eyebrow: {
+    color: '#9A9AA2',
+    fontSize: 10.5,
+    fontWeight: '600',
+    letterSpacing: 1.47,
+  },
+  title: {
+    color: '#F5F5F7',
+    fontSize: 38,
+    fontWeight: '700',
+    letterSpacing: -1.3,
+    lineHeight: 40,
+    marginTop: 14,
+  },
+  titleLight: {
+    color: '#9A9AA2',
+    fontWeight: '200',
+  },
+  subtitle: {
+    color: '#9A9AA2',
+    fontSize: 14.5,
+    fontWeight: '300',
+    lineHeight: 24,
+    marginTop: 14,
+    maxWidth: 300,
+  },
+  coinList: {
+    gap: 12,
+  },
+  coinRow: {
+    alignItems: 'center',
+    backgroundColor: '#131316',
+    borderColor: '#222228',
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 14,
+    minHeight: 72,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  coinRowActive: {
+    borderColor: '#2E2E36',
+  },
+  coin: {
+    alignItems: 'center',
+    borderRadius: 22,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  coinDim: {
+    opacity: 0.48,
+  },
+  coinInner: {
+    borderColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 16,
+    borderWidth: 1,
+    height: 32,
+    width: 32,
+  },
+  coinMeta: {
+    flex: 1,
+  },
+  coinName: {
+    color: '#F5F5F7',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 1.3,
+  },
+  coinSub: {
+    color: '#5C5C66',
+    fontSize: 11,
+    fontWeight: '300',
+    marginTop: 2,
+  },
+  stateWrap: {
+    alignItems: 'flex-end',
+    minWidth: 70,
+  },
+  doneWrap: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 3,
+  },
+  doneText: {
+    color: '#22C55E',
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  waitText: {
+    color: '#5C5C66',
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  scanHint: {
+    alignItems: 'center',
+    borderColor: '#2E2E36',
+    borderRadius: 16,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 14,
+    marginTop: 24,
+    minHeight: 72,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  nfcPulse: {
+    alignItems: 'center',
+    borderColor: '#9A9AA2',
+    borderRadius: 19,
+    borderWidth: 1.5,
+    height: 38,
+    justifyContent: 'center',
+    width: 38,
+  },
+  nfcRingOuter: {
+    borderColor: 'rgba(92,92,102,0.25)',
+    borderRadius: 33,
+    borderWidth: 1,
+    height: 66,
+    position: 'absolute',
+    width: 66,
+  },
+  nfcRingInner: {
+    borderColor: 'rgba(92,92,102,0.5)',
+    borderRadius: 26,
+    borderWidth: 1,
+    height: 52,
+    position: 'absolute',
+    width: 52,
+  },
+  scanCopy: {
+    color: '#9A9AA2',
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '300',
+    lineHeight: 20,
+  },
+  scanStrong: {
+    color: '#F5F5F7',
+    fontWeight: '600',
+  },
+  scanSpinner: {
+    marginLeft: 4,
+  },
+  footer: {
+    gap: 4,
+    paddingBottom: 30,
+  },
+  continueButton: {
+    alignItems: 'center',
+    backgroundColor: '#F5F5F7',
+    borderRadius: 12,
+    height: 44,
+    justifyContent: 'center',
+  },
+  continueButtonDisabled: {
+    backgroundColor: '#6E6E73',
+  },
+  continueText: {
+    color: '#0A0A0C',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  continueTextDisabled: {
+    color: '#0A0A0C',
+    fontWeight: '500',
+  },
+  pairLaterButton: {
+    alignItems: 'center',
+    height: 42,
+    justifyContent: 'center',
+  },
+  pairLaterText: {
+    color: '#9A9AA2',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+});

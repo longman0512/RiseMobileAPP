@@ -17,7 +17,7 @@ export function SessionResumeOverlay({ visible, protocol, onContinue, onEndSessi
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onContinue}>
-      <View className="flex-1 bg-black/85 items-center justify-center px-8">
+      <View className="flex-1 items-center justify-center px-8" style={{ backgroundColor: 'rgba(10,10,12,0.85)' }}>
         <View className="w-full max-w-sm rounded-2xl border border-white/15 bg-zinc-900 px-6 py-8">
           <Text className="text-white text-xl font-bold text-center">Still in {label}</Text>
           <Text className="text-zinc-400 text-center mt-3 text-sm leading-5">

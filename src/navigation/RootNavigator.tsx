@@ -50,7 +50,7 @@ export function RootNavigator() {
   return (
     <Stack.Navigator
       key={navigatorKey}
-      screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0D0D0D' } }}
+      screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0A0A0C' } }}
     >
       {phase !== 'signedIn' ? (
         <Stack.Screen

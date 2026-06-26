@@ -9,7 +9,7 @@ export function VerifyEmailScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
 
   return (
-    <View className="flex-1 bg-black px-6">
+    <View className="flex-1 bg-[#0A0A0C] px-6">
       <View className="flex-1 justify-center items-center">
         <Text className="text-white text-3xl font-bold text-center">Check your inbox</Text>
         <Text className="text-zinc-400 text-center mt-3">

@@ -62,7 +62,7 @@ export function LoginScreen() {
   };
 
   return (
-    <View className="flex-1 bg-black">
+    <View className="flex-1 bg-[#0A0A0C]">
       <KeyboardAwareScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{

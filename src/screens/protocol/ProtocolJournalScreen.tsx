@@ -21,7 +21,7 @@ export function ProtocolJournalScreen({ route }: Props) {
 
   if (protocol !== 'flow' && protocol !== 'reset') {
     return (
-      <View className="flex-1 bg-[#0D0D0D] items-center justify-center px-6">
+      <View className="flex-1 bg-[#0A0A0C] items-center justify-center px-6">
         <Text className="text-white text-center">This screen is only used after FLOW or RESET sessions.</Text>
       </View>
     );
@@ -41,7 +41,7 @@ export function ProtocolJournalScreen({ route }: Props) {
       : null;
 
   return (
-    <View className="flex-1 bg-[#0D0D0D] px-6 py-12">
+    <View className="flex-1 bg-[#0A0A0C] px-6 py-12">
       <Text className="text-white text-2xl font-bold">Reflection</Text>
       <Text className="text-zinc-500 mt-2 text-sm">Optional — skip anytime</Text>
 

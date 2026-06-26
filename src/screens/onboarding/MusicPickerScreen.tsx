@@ -28,7 +28,7 @@ export function MusicPickerScreen() {
   };
 
   return (
-    <View className="flex-1 bg-[#0D0D0D] px-6 py-10">
+    <View className="flex-1 bg-[#0A0A0C] px-6 py-10">
       <View className="flex-1 justify-center">
         <Text className="text-white text-3xl font-bold text-center">FLOW music</Text>
         <Text className="text-zinc-400 text-center mt-3 leading-6">

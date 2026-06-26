@@ -7,7 +7,7 @@
         <item name="android:windowBackground">@color/splash_background</item>
     </style>
 
-    <!-- Pre-Android 12 launch screen (black, matches iOS LaunchScreen.storyboard). -->
+    <!-- Pre-Android 12 launch screen (matches iOS LaunchScreen.storyboard). -->
     <style name="SplashTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowBackground">@color/splash_background</item>
         <item name="android:statusBarColor">@color/splash_background</item>

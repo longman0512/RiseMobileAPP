@@ -125,7 +125,7 @@ export function FocusSetupScreen() {
 
   if (!isIos) {
     return (
-      <View className="flex-1 bg-[#0D0D0D] px-6 py-10">
+      <View className="flex-1 bg-[#0A0A0C] px-6 py-10">
         <View className="flex-1 justify-center">
           <Text className="text-white text-3xl font-bold text-center">Focus &amp; apps</Text>
           <Text className="text-zinc-400 text-center mt-3 leading-6">
@@ -152,7 +152,7 @@ export function FocusSetupScreen() {
   }
 
   return (
-    <View className="flex-1 bg-[#0D0D0D] px-6 py-10">
+    <View className="flex-1 bg-[#0A0A0C] px-6 py-10">
       <Text className="text-zinc-500 text-center text-sm mb-6">
         Step {iosStep + 1} of {IOS_BLOCKING_STEPS.length}
       </Text>

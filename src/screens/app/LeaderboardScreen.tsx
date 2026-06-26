@@ -53,7 +53,7 @@ export function LeaderboardScreen() {
   }, []);
 
   return (
-    <View className="flex-1 bg-black px-6 pt-14">
+    <View className="flex-1 bg-[#0A0A0C] px-6 pt-14">
       <Text className="text-white text-3xl font-bold">Leaderboard</Text>
       <Text className="text-zinc-500 mt-1 text-sm">Total focus minutes (Supabase)</Text>
 

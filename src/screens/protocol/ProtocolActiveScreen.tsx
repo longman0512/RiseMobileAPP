@@ -33,7 +33,7 @@ export function ProtocolActiveScreen({ route }: Props) {
   const canPause = config.allowsPause && session.phase === 'active';
 
   return (
-    <View className="flex-1 bg-[#0D0D0D] items-center justify-center px-6">
+    <View className="flex-1 bg-[#0A0A0C] items-center justify-center px-6">
       <Text className="text-zinc-500 text-[40px] tracking-widest uppercase mb-4">
         {COIN_LABELS[protocol]}
       </Text>

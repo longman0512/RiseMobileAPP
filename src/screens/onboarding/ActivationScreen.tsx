@@ -39,7 +39,7 @@ export function ActivationScreen() {
   };
 
   return (
-    <View className="flex-1 bg-black px-6">
+    <View className="flex-1 bg-[#0A0A0C] px-6">
       <View className="flex-1 justify-center">
         <Text className="text-white text-3xl font-bold text-center">Activate your RISE</Text>
         <Text className="text-zinc-400 text-center mt-2">

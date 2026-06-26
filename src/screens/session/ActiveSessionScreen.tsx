@@ -54,7 +54,7 @@ export function ActiveSessionScreen({ navigation, route }: Props) {
   );
 
   return (
-    <View className="flex-1 bg-black items-center justify-center">
+    <View className="flex-1 bg-[#0A0A0C] items-center justify-center">
       <Pressable onPress={() => setPaused((p) => !p)} className="items-center">
         <Text
           className={[

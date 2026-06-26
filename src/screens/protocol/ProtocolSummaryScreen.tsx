@@ -17,7 +17,7 @@ export function ProtocolSummaryScreen({ route }: Props) {
 
   if (protocol !== 'lockin') {
     return (
-      <View className="flex-1 bg-[#0D0D0D] items-center justify-center px-6">
+      <View className="flex-1 bg-[#0A0A0C] items-center justify-center px-6">
         <Text className="text-white text-center">This screen is only used after LOCK IN sessions.</Text>
       </View>
     );
@@ -25,7 +25,7 @@ export function ProtocolSummaryScreen({ route }: Props) {
 
   if (!summary) {
     return (
-      <View className="flex-1 bg-[#0D0D0D] items-center justify-center">
+      <View className="flex-1 bg-[#0A0A0C] items-center justify-center">
         <Text className="text-white">No session data</Text>
       </View>
     );
@@ -39,7 +39,7 @@ export function ProtocolSummaryScreen({ route }: Props) {
   const showBreakdown = summary.segments.length > 1;
 
   return (
-    <View className="flex-1 bg-[#0D0D0D] px-6 py-16 justify-center">
+    <View className="flex-1 bg-[#0A0A0C] px-6 py-16 justify-center">
       <Text className="text-white text-3xl font-bold text-center">{COIN_LABELS.lockin}</Text>
       <Text className="text-zinc-400 text-center mt-4 text-lg">{durationLine}</Text>
 

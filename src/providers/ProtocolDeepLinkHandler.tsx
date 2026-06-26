@@ -1,7 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { Linking } from 'react-native';
 
-import { isAuthDeepLink, parseProtocolFromUrl } from '../lib/protocolDeepLink';
+import {
+  areProtocolDeepLinksSuppressed,
+  isAuthDeepLink,
+  parseProtocolFromUrl,
+} from '../lib/protocolDeepLink';
 import { consumePendingProtocol, queuePendingProtocol } from './SessionProvider';
 import { useAuth } from './AuthProvider';
 import { useCoins } from './CoinsProvider';
@@ -23,6 +27,7 @@ export function ProtocolDeepLinkHandler() {
   // evaluates against an empty list and falsely reports the coin as unregistered.
   const triggerForProtocol = (protocol: ReturnType<typeof parseProtocolFromUrl>) => {
     if (!protocol) return;
+    if (areProtocolDeepLinksSuppressed()) return;
 
     if (phase !== 'signedIn') {
       queuePendingProtocol(protocol);
@@ -41,6 +46,7 @@ export function ProtocolDeepLinkHandler() {
 
   const handleUrl = (url: string | null) => {
     if (!url || isAuthDeepLink(url)) return;
+    if (areProtocolDeepLinksSuppressed()) return;
     triggerForProtocol(parseProtocolFromUrl(url));
   };
 
@@ -49,6 +55,7 @@ export function ProtocolDeepLinkHandler() {
   // launch URL arrived before the coin list was hydrated.
   useEffect(() => {
     if (phase !== 'signedIn' || loading) return;
+    if (areProtocolDeepLinksSuppressed()) return;
 
     const pending = consumePendingProtocol();
     if (!pending) return;

@@ -49,7 +49,7 @@ export function AppTabs() {
           headerShown: false,
           tabBarShowLabel: false,
           tabBarStyle: {
-            backgroundColor: '#0D0D0D',
+            backgroundColor: '#0A0A0C',
             borderTopColor: 'rgba(255,255,255,0.05)',
             borderTopWidth: 1,
             height: 72,

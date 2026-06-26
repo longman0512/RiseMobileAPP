@@ -51,7 +51,7 @@ export function DashboardScreen() {
   };
 
   return (
-    <View className="flex-1 bg-black">
+    <View className="flex-1 bg-[#0A0A0C]">
       <ScrollView
         className="flex-1"
         contentContainerStyle={{

@@ -73,7 +73,7 @@ export function HistoryScreen() {
   }, []);
 
   return (
-    <View className="flex-1 bg-[#0D0D0D]" style={{ paddingTop: insets.top }}>
+    <View className="flex-1 bg-[#0A0A0C]" style={{ paddingTop: insets.top }}>
       <View className="flex-row items-center justify-between px-6 mt-6 mb-2">
         <Text className="text-white text-3xl font-bold">History</Text>
         <Pressable
