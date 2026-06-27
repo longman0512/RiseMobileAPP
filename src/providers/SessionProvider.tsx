@@ -24,6 +24,7 @@ import {
   RESET_INSTRUCTION_ROTATE_MS,
 } from '../lib/protocolConfig';
 import { openFlowPlaylist } from '../lib/flowMusic';
+import { sessionPointsEarned } from '../lib/sessionScoring';
 import {
   endSession,
   resolveSessionSave,
@@ -55,6 +56,9 @@ export type SessionSummary = {
   overtimeMinutes: number;
   segments: SessionSegment[];
   streak: number | null;
+  exits: number;
+  pointsEarned: number;
+  totalPointsAfter: number;
 };
 
 function segmentElapsedSeconds(
@@ -75,6 +79,9 @@ type SessionContextValue = {
   plannedMinutes: number;
   timeRemainingSeconds: number;
   overtimeSeconds: number;
+  /** Elapsed seconds for open-ended FLOW sessions. */
+  elapsedSeconds: number;
+  sessionExits: number;
   flowThought: string;
   resetInstruction: string;
   summary: SessionSummary | null;
@@ -83,6 +90,8 @@ type SessionContextValue = {
   resumeFlowPrompt: boolean;
   pendingFlowResumeSeconds: number | null;
   pausedFlowRemainingSeconds: number | null;
+  /** 1-based index of the current segment within this session. */
+  segmentIndex: number;
   isSavingSession: boolean;
   setPlannedMinutes: (minutes: number) => void;
   setFlowThought: (text: string) => void;
@@ -124,6 +133,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [plannedMinutes, setPlannedMinutes] = useState(30);
   const [timeRemainingSeconds, setTimeRemainingSeconds] = useState(0);
   const [overtimeSeconds, setOvertimeSeconds] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [sessionExits, setSessionExits] = useState(0);
   const [flowThought, setFlowThought] = useState('');
   const [resetInstructionIndex, setResetInstructionIndex] = useState(0);
   const [segments, setSegments] = useState<SessionSegment[]>([]);
@@ -154,14 +165,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const timeRemainingRef = useRef(0);
   const overtimeSecondsRef = useRef(0);
+  const elapsedSecondsRef = useRef(0);
+  const activeProtocolRef = useRef<CoinType | null>(null);
   const timerSnapshotRef = useRef<{
     phase: 'active' | 'overtime';
     timeRemainingSeconds: number;
     overtimeSeconds: number;
+    elapsedSeconds: number;
+    protocol: CoinType | null;
     wallMs: number;
   } | null>(null);
   const wentBackgroundAtRef = useRef<number | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const completeActiveSessionRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     timeRemainingRef.current = timeRemainingSeconds;
@@ -170,6 +186,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     overtimeSecondsRef.current = overtimeSeconds;
   }, [overtimeSeconds]);
+
+  useEffect(() => {
+    elapsedSecondsRef.current = elapsedSeconds;
+  }, [elapsedSeconds]);
+
+  useEffect(() => {
+    activeProtocolRef.current = activeProtocol;
+  }, [activeProtocol]);
+
+  function playLockInCompleteFeedback() {
+    Vibration.vibrate([0, 80, 60, 120]);
+  }
 
   const hasCoinType = useCallback(
     (type: CoinType) => coins.some((c) => c.coin_type === type && c.active),
@@ -182,6 +210,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setPlannedMinutes(config.defaultMinutes);
     setTimeRemainingSeconds(0);
     setOvertimeSeconds(0);
+    setElapsedSeconds(0);
+    setSessionExits(0);
     setFlowThought('');
     setResetInstructionIndex(0);
     setSegments([]);
@@ -230,6 +260,21 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     Alert.alert('Resume FLOW', 'Tap your FLOW coin to resume your session.');
   }, [pausedFlowRemainingSeconds]);
 
+  const startFlowSegment = useCallback((resumeElapsedSeconds = 0) => {
+    const now = new Date().toISOString();
+    if (!sessionStartedAt.current) sessionStartedAt.current = now;
+    segmentStartedAt.current = now;
+    setActiveProtocol('flow');
+    setPlannedMinutes(PROTOCOL_CONFIG.flow.defaultMinutes);
+    setElapsedSeconds(resumeElapsedSeconds);
+    setTimeRemainingSeconds(0);
+    setOvertimeSeconds(0);
+    setSessionPhase('active');
+    lastHapticAt.current = Date.now();
+    void syncFocusModeForProtocol('flow');
+    navigateProtocolStack('Active', { protocol: 'flow' });
+  }, []);
+
   const startActiveSegment = useCallback((protocol: CoinType, durationSeconds: number) => {
     const now = new Date().toISOString();
     if (!sessionStartedAt.current) sessionStartedAt.current = now;
@@ -239,6 +284,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setPlannedMinutes(segmentPlannedMins);
     setTimeRemainingSeconds(durationSeconds);
     setOvertimeSeconds(0);
+    setElapsedSeconds(0);
     setSessionPhase('active');
     lastHapticAt.current = Date.now();
     if (protocol === 'reset') {
@@ -252,6 +298,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const mins = elapsedSecondsToMinutes(elapsedSeconds);
     setSegments((prev) => [...prev, { protocol, duration_mins: mins }]);
   }, []);
+
+  const flowElapsed = useCallback(() => Math.max(1, elapsedSecondsRef.current), []);
 
   const handleProtocolTrigger = useCallback(
     (protocol: CoinType, options?: { hasRegisteredCoin?: boolean }) => {
@@ -277,7 +325,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           setPausedFlowRemainingSeconds(null);
           sessionPrimaryCoinRef.current = 'flow';
           setActiveProtocol('flow');
-          startActiveSegment('flow', pending);
+          startFlowSegment(pending);
           return;
         }
         openPreStart(protocol);
@@ -296,33 +344,38 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         if (current === 'lockin') return;
 
         if (current === 'flow') {
-          if (protocol === 'lockin') return;
+          if (protocol === 'lockin') {
+            const elapsed = flowElapsed();
+            void persistInterimSegment('flow', elapsedSecondsToMinutes(elapsed));
+            openPreStart('lockin');
+            return;
+          }
           if (protocol === 'reset') {
-            const elapsed = segmentElapsedSeconds(
-              plannedMinutes,
-              timeRemainingSeconds,
-              sessionPhase === 'overtime' ? overtimeSeconds : 0,
-            );
-            closeSegment('flow', Math.max(elapsed, 1));
-            setPausedFlowRemainingSeconds(
-              Math.max(1, timeRemainingSeconds + overtimeSeconds),
-            );
+            closeSegment('flow', flowElapsed());
+            setPausedFlowRemainingSeconds(elapsedSecondsRef.current);
             const resetSeconds = PROTOCOL_CONFIG.reset.defaultMinutes * 60;
             startActiveSegment('reset', resetSeconds);
+          }
+          if (protocol === 'flow') {
+            // Ignore duplicate Flow tap while already in Flow.
           }
           return;
         }
 
         if (current === 'reset') {
-          if (protocol === 'flow' && pausedFlowRemainingSeconds != null) {
-            const elapsed = segmentElapsedSeconds(
-              plannedMinutes,
-              timeRemainingSeconds,
-              overtimeSeconds,
-            );
-            closeSegment('reset', Math.max(elapsed, 1));
-            startActiveSegment('flow', pausedFlowRemainingSeconds);
-            setPausedFlowRemainingSeconds(null);
+          if (protocol === 'flow') {
+            if (pausedFlowRemainingSeconds != null) {
+              const elapsed = segmentElapsedSeconds(
+                plannedMinutes,
+                timeRemainingSeconds,
+                overtimeSeconds,
+              );
+              closeSegment('reset', Math.max(elapsed, 1));
+              startFlowSegment(pausedFlowRemainingSeconds);
+              setPausedFlowRemainingSeconds(null);
+            } else {
+              completeActiveSessionRef.current?.();
+            }
             return;
           }
           if (protocol === 'lockin') {
@@ -345,7 +398,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [
       activeProtocol,
       authPhase,
-      closeSegment,
+      flowElapsed,
       hasCoinType,
       openPreStart,
       overtimeSeconds,
@@ -354,6 +407,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       plannedMinutes,
       sessionPhase,
       startActiveSegment,
+      startFlowSegment,
       timeRemainingSeconds,
     ],
   );
@@ -361,19 +415,24 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const beginSession = useCallback(
     (plannedMinutesOverride?: number) => {
       if (!activeProtocol) return;
-      const mins = plannedMinutesOverride ?? plannedMinutes;
-      setPlannedMinutes(mins);
-      const seconds = mins * 60;
       sessionStartedAt.current = new Date().toISOString();
       sessionPrimaryCoinRef.current = activeProtocol;
       setSegments([]);
+      setSessionExits(0);
       timerSnapshotRef.current = null;
-      startActiveSegment(activeProtocol, seconds);
+
       if (activeProtocol === 'flow') {
+        setPlannedMinutes(PROTOCOL_CONFIG.flow.defaultMinutes);
+        startFlowSegment(0);
         void openFlowPlaylist(musicService);
+        return;
       }
+
+      const mins = plannedMinutesOverride ?? plannedMinutes;
+      setPlannedMinutes(mins);
+      startActiveSegment(activeProtocol, mins * 60);
     },
-    [activeProtocol, musicService, plannedMinutes, startActiveSegment],
+    [activeProtocol, musicService, plannedMinutes, startActiveSegment, startFlowSegment],
   );
 
   const persistSession = useCallback(
@@ -454,11 +513,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const completeActiveSession = useCallback(() => {
     if (!activeProtocol) return;
 
-    const elapsedActive = segmentElapsedSeconds(
-      plannedMinutes,
-      timeRemainingSeconds,
-      sessionPhase === 'overtime' ? overtimeSeconds : 0,
-    );
+    const elapsedActive =
+      activeProtocol === 'flow'
+        ? Math.max(1, elapsedSecondsRef.current)
+        : segmentElapsedSeconds(
+            plannedMinutes,
+            timeRemainingSeconds,
+            sessionPhase === 'overtime' ? overtimeSeconds : 0,
+          );
     const mins = elapsedSecondsToMinutes(elapsedActive);
     const nextSegments: SessionSegment[] = [
       ...segments,
@@ -468,6 +530,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const focusMinutes = sumFocusMinutes(nextSegments);
     const recoveryMinutes = sumRecoveryMinutes(nextSegments);
     const overtimeMinutes = Math.round(overtimeSeconds / 60);
+
+    const scoringMinutes =
+      activeProtocol === 'lockin'
+        ? mins
+        : activeProtocol === 'flow'
+          ? focusMinutes
+          : 0;
+    const pointsEarned = sessionPointsEarned(activeProtocol, scoringMinutes, sessionExits);
 
     setSegments(nextSegments);
     setSummary({
@@ -479,6 +549,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       overtimeMinutes,
       segments: nextSegments,
       streak: null,
+      exits: sessionExits,
+      pointsEarned,
+      totalPointsAfter: 0,
     });
 
     const endScreen = PROTOCOL_CONFIG[activeProtocol].endScreen;
@@ -528,8 +601,35 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     plannedMinutes,
     segments,
     sessionPhase,
+    sessionExits,
     timeRemainingSeconds,
   ]);
+
+  completeActiveSessionRef.current = completeActiveSession;
+
+  const handleResetTimerEnd = useCallback(() => {
+    if (activeProtocol !== 'reset') return;
+    if (pausedFlowRemainingSeconds != null) {
+      closeSegment('reset', plannedMinutes);
+      startFlowSegment(pausedFlowRemainingSeconds);
+      setPausedFlowRemainingSeconds(null);
+      return;
+    }
+    completeActiveSession();
+  }, [
+    activeProtocol,
+    closeSegment,
+    completeActiveSession,
+    pausedFlowRemainingSeconds,
+    plannedMinutes,
+    startFlowSegment,
+  ]);
+
+  const handleLockInTimerEnd = useCallback(() => {
+    if (activeProtocol !== 'lockin') return;
+    playLockInCompleteFeedback();
+    completeActiveSession();
+  }, [activeProtocol, completeActiveSession]);
 
   const endSessionEarly = useCallback(() => {
     completeActiveSession();
@@ -632,9 +732,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const extendFlowTwentyMinutes = useCallback(() => {
     lastPersistedSessionId.current = null;
-    setPlannedMinutes(20);
-    setTimeRemainingSeconds(20 * 60);
-    setOvertimeSeconds(0);
     setActiveProtocol('flow');
     setSessionPhase('active');
     sessionStartedAt.current = new Date().toISOString();
@@ -687,19 +784,30 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     timerSnapshotRef.current = null;
     if (elapsed <= 0) return;
 
+    if (snap.protocol === 'flow') {
+      setElapsedSeconds(snap.elapsedSeconds + elapsed);
+      return;
+    }
+
     if (snap.phase === 'active') {
       if (snap.timeRemainingSeconds > elapsed) {
         setTimeRemainingSeconds(snap.timeRemainingSeconds - elapsed);
       } else {
         const intoOvertime = elapsed - snap.timeRemainingSeconds;
         setTimeRemainingSeconds(0);
-        setSessionPhase('overtime');
-        setOvertimeSeconds(snap.overtimeSeconds + intoOvertime);
+        if (snap.protocol === 'lockin') {
+          handleLockInTimerEnd();
+        } else if (snap.protocol === 'reset') {
+          handleResetTimerEnd();
+        } else {
+          setSessionPhase('overtime');
+          setOvertimeSeconds(snap.overtimeSeconds + intoOvertime);
+        }
       }
     } else {
       setOvertimeSeconds(snap.overtimeSeconds + elapsed);
     }
-  }, []);
+  }, [handleLockInTimerEnd, handleResetTimerEnd]);
 
   useEffect(() => {
     if (authPhase !== 'signedIn') return;
@@ -719,11 +827,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       if (goingBackground) {
         const phase = phaseRef.current;
         if (phase === 'active' || phase === 'overtime') {
+          setSessionExits((count) => count + 1);
           wentBackgroundAtRef.current = Date.now();
           timerSnapshotRef.current = {
             phase,
             timeRemainingSeconds: timeRemainingRef.current,
             overtimeSeconds: overtimeSecondsRef.current,
+            elapsedSeconds: elapsedSecondsRef.current,
+            protocol: activeProtocolRef.current,
             wallMs: Date.now(),
           };
         }
@@ -759,9 +870,24 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (sessionPhase !== 'active' && sessionPhase !== 'overtime') return;
 
     const interval = setInterval(() => {
+      const proto = activeProtocolRef.current;
+
+      if (proto === 'flow' && phaseRef.current === 'active') {
+        setElapsedSeconds((e) => e + 1);
+        return;
+      }
+
       if (phaseRef.current === 'active') {
         setTimeRemainingSeconds((t) => {
           if (t <= 1) {
+            if (proto === 'lockin') {
+              setTimeout(() => handleLockInTimerEnd(), 0);
+              return 0;
+            }
+            if (proto === 'reset') {
+              setTimeout(() => handleResetTimerEnd(), 0);
+              return 0;
+            }
             setSessionPhase('overtime');
             return 0;
           }
@@ -773,7 +899,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [sessionPhase]);
+  }, [sessionPhase, handleLockInTimerEnd, handleResetTimerEnd]);
 
   useEffect(() => {
     if (sessionPhase !== 'active' && sessionPhase !== 'overtime') return;
@@ -810,6 +936,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       plannedMinutes,
       timeRemainingSeconds,
       overtimeSeconds,
+      elapsedSeconds,
+      sessionExits,
       flowThought,
       resetInstruction,
       summary,
@@ -818,6 +946,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       resumeFlowPrompt,
       pendingFlowResumeSeconds: pendingFlowResumeDisplay,
       pausedFlowRemainingSeconds,
+      segmentIndex: segments.length + 1,
       isSavingSession,
       setPlannedMinutes,
       setFlowThought,
@@ -839,6 +968,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       beginSession,
       cancelSession,
       dismissResumeFlowPrompt,
+      elapsedSeconds,
       endSessionEarly,
       extendFlowTwentyMinutes,
       finishSummary,
@@ -855,6 +985,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       pausedFlowRemainingSeconds,
       isSavingSession,
       saveJournal,
+      segments,
+      sessionExits,
       sessionPhase,
       skipJournal,
       summary,

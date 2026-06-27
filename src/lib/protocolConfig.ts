@@ -6,6 +6,10 @@ export type ProtocolConfig = {
   defaultMinutes: number;
   minMinutes: number;
   maxMinutes: number;
+  /** LOCK IN duration chips on PreStart (minutes). */
+  durationPresets?: number[];
+  /** FLOW counts up with no hard end. */
+  openEnded?: boolean;
   hapticIntervalMinutes: number | null;
   allowsPause: boolean;
   allowsThoughtCapture: boolean;
@@ -24,7 +28,8 @@ export const PROTOCOL_CONFIG: Record<CoinType, ProtocolConfig> = {
   lockin: {
     defaultMinutes: 50,
     minMinutes: 25,
-    maxMinutes: 120,
+    maxMinutes: 90,
+    durationPresets: [25, 50, 90],
     hapticIntervalMinutes: 20,
     allowsPause: false,
     allowsThoughtCapture: false,
@@ -35,6 +40,7 @@ export const PROTOCOL_CONFIG: Record<CoinType, ProtocolConfig> = {
     defaultMinutes: 30,
     minMinutes: 15,
     maxMinutes: 90,
+    openEnded: true,
     hapticIntervalMinutes: 15,
     allowsPause: true,
     allowsThoughtCapture: true,

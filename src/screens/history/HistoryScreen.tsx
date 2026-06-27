@@ -1,158 +1,319 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { Clock, LogOut } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ActivityHeatmap } from '../../components/ActivityHeatmap';
-import { DashboardCard } from '../../components/DashboardCard';
-import { BarChartIcon } from '../../components/icons/BarChartIcon';
-import { SessionDayModal } from '../../components/SessionDayModal';
-import { weeklyFocusHours } from '../../lib/sessionAnalytics';
+import { ProtocolCoinBadge } from '../../components/protocol/ProtocolCoinBadge';
+import {
+  formatHoursMinutesLong,
+  formatRankPoints,
+  founderBadgeLabel,
+  journeyRank,
+  resetSessionCount,
+  sessionCompletionRate,
+  totalFocusMinutes,
+} from '../../lib/journeyFormat';
+import { PROTOCOL_THEME } from '../../lib/protocolTheme';
 import { fetchSessionHistory, fetchUserStats, type SessionRecord, type UserStats } from '../../lib/sessionApi';
-import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../providers/AuthProvider';
+import { COIN_LABELS, COIN_TYPES, type CoinType } from '../../types/coins';
+
+const EMPTY_STATS: UserStats = {
+  current_streak: 0,
+  longest_streak: 0,
+  last_session_date: null,
+  total_lockin_mins: 0,
+  total_flow_mins: 0,
+  total_reset_mins: 0,
+};
+
+function avatarInitial(username: string | undefined, email: string | undefined): string {
+  const source = username?.trim() || email?.trim() || '?';
+  return source.charAt(0).toUpperCase();
+}
+
+function coinMinutes(stats: UserStats, type: CoinType): number {
+  if (type === 'lockin') return stats.total_lockin_mins;
+  if (type === 'flow') return stats.total_flow_mins;
+  return stats.total_reset_mins;
+}
 
 export function HistoryScreen() {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
   const userId = session?.user?.id;
+  const username = session?.user?.user_metadata?.username as string | undefined;
+  const email = session?.user?.email ?? '';
+  const founderNumber = session?.user?.user_metadata?.founder_number as number | undefined;
 
   const [loading, setLoading] = useState(true);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
-  const [stats, setStats] = useState<UserStats | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [modalDate, setModalDate] = useState<string | null>(null);
-  const [modalSessions, setModalSessions] = useState<SessionRecord[]>([]);
-
-  const weeklyHours = useMemo(() => weeklyFocusHours(sessions), [sessions]);
-  const totalSessions = sessions.length;
+  const [stats, setStats] = useState<UserStats>(EMPTY_STATS);
 
   const load = useCallback(async () => {
     if (!userId) return;
     setLoading(true);
-    setLoadError(null);
-
     const [historyResult, statsResult] = await Promise.all([
       fetchSessionHistory(userId),
       fetchUserStats(userId),
     ]);
-
     setSessions(historyResult.sessions);
     setStats(statsResult.stats);
-
-    const errors = [historyResult.error, statsResult.error].filter(Boolean);
-    if (errors.length > 0) {
-      setLoadError(errors.join(' · '));
-    }
-
     setLoading(false);
   }, [userId]);
 
   useFocusEffect(
     useCallback(() => {
-      load().catch(() => setLoading(false));
+      void load();
     }, [load]),
   );
 
-  const logout = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      Alert.alert('Logout failed', error.message);
-    }
-  };
-
-  const openDayModal = useCallback((date: string, daySessions: SessionRecord[]) => {
-    setModalDate(date);
-    setModalSessions(daySessions);
-  }, []);
-
-  const closeDayModal = useCallback(() => {
-    setModalDate(null);
-    setModalSessions([]);
-  }, []);
+  const { points, rank } = useMemo(() => journeyRank(stats), [stats]);
+  const founderLabel = founderBadgeLabel(founderNumber);
+  const totalFocus = totalFocusMinutes(stats);
+  const completion = sessionCompletionRate(sessions);
+  const resetsTaken = resetSessionCount(sessions);
 
   return (
-    <View className="flex-1 bg-[#0A0A0C]" style={{ paddingTop: insets.top }}>
-      <View className="flex-row items-center justify-between px-6 mt-6 mb-2">
-        <Text className="text-white text-3xl font-bold">History</Text>
-        <Pressable
-          onPress={logout}
-          className="flex-row items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5"
-        >
-          <LogOut size={14} color="#fafafa" />
-          <Text className="text-white text-xs font-semibold">Logout</Text>
-        </Pressable>
-      </View>
-
+    <View style={[styles.root, { paddingTop: insets.top }]}>
       <ScrollView
-        className="flex-1 px-6"
-        contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 100, paddingHorizontal: 28 }}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor="#fff" />}
+        showsVerticalScrollIndicator={false}
       >
-        <Text className="text-zinc-500 text-sm">Tap a coin to begin a session</Text>
-
-        <View className="mt-8 rounded-2xl border border-white/10 bg-zinc-900/50 p-6 items-center">
-          <Text className="text-zinc-500 text-xs uppercase tracking-widest">Current streak</Text>
-          <Text className="text-white text-5xl font-bold mt-2">{stats?.current_streak ?? 0}</Text>
-          <Text className="text-zinc-600 text-sm mt-1">
-            Longest: {stats?.longest_streak ?? 0} days
-          </Text>
+        <View style={styles.head}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{avatarInitial(username, email)}</Text>
+          </View>
+          <View style={styles.identity}>
+            <Text style={styles.name}>{username?.trim() || 'Rise member'}</Text>
+            {founderLabel ? (
+              <View style={styles.founderChip}>
+                <View style={styles.founderDot} />
+                <Text style={styles.founderText}>{founderLabel.toUpperCase()}</Text>
+              </View>
+            ) : null}
+          </View>
         </View>
 
-        {loadError ? (
-          <Text className="text-amber-500/90 text-center mt-4 text-sm px-2">{loadError}</Text>
-        ) : null}
+        <View style={styles.rankCard}>
+          <View style={styles.rankRing} />
+          <Text style={styles.rankLabel}>Current rank</Text>
+          <Text style={styles.rankBig}>{rank.name}</Text>
+          <Text style={styles.rankPts}>{formatRankPoints(points)}</Text>
+        </View>
+
+        <View style={styles.grid}>
+          <View style={styles.cell}>
+            <Text style={styles.cellNum}>{formatHoursMinutesLong(totalFocus)}</Text>
+            <Text style={styles.cellLabel}>Total focus</Text>
+          </View>
+          <View style={styles.cell}>
+            <Text style={styles.cellNum}>{sessions.length}</Text>
+            <Text style={styles.cellLabel}>Sessions</Text>
+          </View>
+          <View style={styles.cell}>
+            <Text style={styles.cellNum}>{completion}%</Text>
+            <Text style={styles.cellLabel}>Completion</Text>
+          </View>
+          <View style={styles.cell}>
+            <Text style={styles.cellNum}>{resetsTaken}</Text>
+            <Text style={styles.cellLabel}>Resets taken</Text>
+          </View>
+        </View>
+
+        <Text style={styles.sectionHd}>By coin</Text>
+        <View style={styles.coinList}>
+          {COIN_TYPES.map((type) => {
+            const theme = PROTOCOL_THEME[type];
+            const mins = coinMinutes(stats, type);
+            return (
+              <View key={type} style={styles.coinRow}>
+                <ProtocolCoinBadge colors={theme.coinGradient} size={34} />
+                <Text style={styles.coinName}>{COIN_LABELS[type]}</Text>
+                <Text style={styles.coinHours}>{formatHoursMinutesLong(mins)}</Text>
+              </View>
+            );
+          })}
+        </View>
 
         {loading && sessions.length === 0 ? (
-          <ActivityIndicator className="mt-12" color="#fff" />
+          <ActivityIndicator color="#fff" style={styles.loader} />
         ) : null}
-
-        {!loading && sessions.length === 0 && !loadError ? (
-          <Text className="text-zinc-500 text-center mt-6 text-sm">
-            No sessions yet. Tap a coin to start.
-          </Text>
-        ) : null}
-
-        <View className="flex-row gap-4 mt-8">
-          <DashboardCard className="flex-1 h-32">
-            <View className="flex-row items-start gap-2 mb-2">
-              <Clock size={18} color="#22d3ee" />
-              <Text className="text-zinc-400 text-xs">This Week</Text>
-            </View>
-            <Text className="text-cyan-400 text-3xl font-bold">
-              {weeklyHours}
-              <Text className="text-zinc-400 text-xs font-normal"> hrs</Text>
-            </Text>
-          </DashboardCard>
-
-          <DashboardCard className="flex-1 h-32">
-            <View className="flex-row items-start gap-2 mb-2">
-              <BarChartIcon size={20} color="rgba(34,211,238,0.5)" />
-              <Text className="text-zinc-400 text-xs">Sessions</Text>
-            </View>
-            <Text className="text-white text-3xl font-bold">
-              {totalSessions}
-              <Text className="text-zinc-400 text-xs font-normal"> total</Text>
-            </Text>
-          </DashboardCard>
-        </View>
-
-        <DashboardCard className="mt-6 min-h-[200px]">
-          <View className="items-center mb-4">
-            <Text className="text-white text-sm font-medium">Activity Calendar</Text>
-            <Text className="text-zinc-400 text-xs mt-0.5">Last 90 days</Text>
-          </View>
-          <ActivityHeatmap sessions={sessions} onDayPress={openDayModal} />
-        </DashboardCard>
       </ScrollView>
-
-      <SessionDayModal
-        visible={modalDate != null}
-        date={modalDate}
-        sessions={modalSessions}
-        onClose={closeDayModal}
-      />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    backgroundColor: '#0A0A0C',
+    flex: 1,
+  },
+  head: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 16,
+    paddingTop: 34,
+  },
+  avatar: {
+    alignItems: 'center',
+    backgroundColor: '#131316',
+    borderColor: '#2E2E36',
+    borderRadius: 29,
+    borderWidth: 1,
+    height: 58,
+    justifyContent: 'center',
+    width: 58,
+  },
+  avatarText: {
+    color: '#F5F5F7',
+    fontSize: 19,
+    fontWeight: '600',
+  },
+  identity: {
+    flex: 1,
+  },
+  name: {
+    color: '#F5F5F7',
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: -0.4,
+  },
+  founderChip: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(201,162,75,0.08)',
+    borderColor: 'rgba(201,162,75,0.4)',
+    borderRadius: 100,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  founderDot: {
+    backgroundColor: '#E8C56A',
+    borderRadius: 3,
+    height: 5,
+    width: 5,
+  },
+  founderText: {
+    color: '#E8C56A',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  rankCard: {
+    alignItems: 'center',
+    backgroundColor: '#131316',
+    borderColor: '#222228',
+    borderRadius: 20,
+    borderWidth: 1,
+    marginTop: 30,
+    overflow: 'hidden',
+    padding: 24,
+  },
+  rankRing: {
+    borderColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 110,
+    borderWidth: 1,
+    height: 220,
+    position: 'absolute',
+    top: -70,
+    width: 220,
+  },
+  rankLabel: {
+    color: '#5C5C66',
+    fontSize: 10.5,
+    fontWeight: '600',
+    letterSpacing: 1.47,
+    textTransform: 'uppercase',
+  },
+  rankBig: {
+    color: '#F5F5F7',
+    fontSize: 32,
+    fontWeight: '700',
+    letterSpacing: -1,
+    marginTop: 8,
+  },
+  rankPts: {
+    color: '#9A9AA2',
+    fontSize: 12,
+    fontWeight: '300',
+    marginTop: 6,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 14,
+  },
+  cell: {
+    backgroundColor: '#131316',
+    borderColor: '#222228',
+    borderRadius: 16,
+    borderWidth: 1,
+    flexBasis: '47%',
+    flexGrow: 1,
+    padding: 16,
+  },
+  cellNum: {
+    color: '#F5F5F7',
+    fontSize: 21,
+    fontWeight: '700',
+    letterSpacing: -0.4,
+  },
+  cellLabel: {
+    color: '#5C5C66',
+    fontSize: 10,
+    fontWeight: '500',
+    letterSpacing: 0.8,
+    marginTop: 4,
+    textTransform: 'uppercase',
+  },
+  sectionHd: {
+    color: '#5C5C66',
+    fontSize: 10.5,
+    fontWeight: '600',
+    letterSpacing: 1.47,
+    marginBottom: 12,
+    marginTop: 22,
+    textTransform: 'uppercase',
+  },
+  coinList: {
+    gap: 0,
+  },
+  coinRow: {
+    alignItems: 'center',
+    borderBottomColor: '#222228',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: 14,
+    paddingVertical: 12,
+  },
+  coinName: {
+    color: '#F5F5F7',
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  coinHours: {
+    color: '#9A9AA2',
+    fontSize: 12.5,
+    fontWeight: '300',
+  },
+  loader: {
+    marginTop: 24,
+  },
+});

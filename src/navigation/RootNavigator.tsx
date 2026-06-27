@@ -23,7 +23,7 @@ export type RootStackParamList = {
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 function resolveOnboardingRoute(): OnboardingInitialRoute {
-  return 'Permissions';
+  return 'CoinRegistration';
 }
 
 export function RootNavigator() {
@@ -42,7 +42,7 @@ export function RootNavigator() {
   const onboardingInitialRoute =
     phase === 'signedIn'
       ? resolveOnboardingRoute()
-      : 'Permissions';
+      : 'CoinRegistration';
 
   const navigatorKey =
     phase === 'signedIn' ? (showOnboarding ? 'signedIn-onboarding' : 'signedIn-app') : phase;

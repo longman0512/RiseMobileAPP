@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { OnboardingStackParamList } from '../../navigation/onboarding/OnboardingNavigator';
 import { openFlowPlaylist } from '../../lib/flowMusic';
 import { useUserPreferences, type MusicService } from '../../providers/UserPreferencesProvider';
+import { onboardingStyles, setupEyebrow } from './onboardingLayout';
 
 const OPTIONS: { id: MusicService; label: string; subtitle: string }[] = [
   { id: 'spotify', label: 'Spotify', subtitle: 'Open FLOW playlist in Spotify' },
@@ -15,6 +17,7 @@ const OPTIONS: { id: MusicService; label: string; subtitle: string }[] = [
 
 export function MusicPickerScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<OnboardingStackParamList>>();
+  const insets = useSafeAreaInsets();
   const { musicService, setMusicService } = useUserPreferences();
   const [selected, setSelected] = useState<MusicService>(musicService);
 
@@ -28,41 +31,62 @@ export function MusicPickerScreen() {
   };
 
   return (
-    <View className="flex-1 bg-[#0A0A0C] px-6 py-10">
-      <View className="flex-1 justify-center">
-        <Text className="text-white text-3xl font-bold text-center">FLOW music</Text>
-        <Text className="text-zinc-400 text-center mt-3 leading-6">
-          Choose a service for the lo-fi / ambient playlist when you start FLOW.
-        </Text>
-        <View className="mt-10 gap-3">
+    <View style={onboardingStyles.root}>
+      <View style={[onboardingStyles.content, { paddingTop: insets.top + 18 }]}>
+        <View style={onboardingStyles.hero}>
+          <Text style={onboardingStyles.eyebrow}>{setupEyebrow(3)}</Text>
+          <Text style={onboardingStyles.title}>
+            FLOW{'\n'}
+            <Text style={onboardingStyles.titleLight}>music.</Text>
+          </Text>
+          <Text style={onboardingStyles.subtitle}>
+            Choose a service for the lo-fi / ambient playlist when you start FLOW.
+          </Text>
+        </View>
+
+        <View style={onboardingStyles.optionList}>
           {OPTIONS.map((opt) => (
             <Pressable
               key={opt.id}
               onPress={() => setSelected(opt.id)}
-              className={[
-                'rounded-xl border px-4 py-4',
-                selected === opt.id ? 'border-white bg-white/10' : 'border-white/15',
-              ].join(' ')}
+              style={[
+                onboardingStyles.optionRow,
+                selected === opt.id ? onboardingStyles.optionRowSelected : null,
+              ]}
             >
-              <Text className="text-white font-semibold">{opt.label}</Text>
-              <Text className="text-zinc-500 text-sm mt-1">{opt.subtitle}</Text>
+              <Text style={onboardingStyles.optionTitle}>{opt.label}</Text>
+              <Text style={onboardingStyles.optionSub}>{opt.subtitle}</Text>
             </Pressable>
           ))}
         </View>
       </View>
-      <View className="pb-10 gap-3">
+
+      <View style={onboardingStyles.footer}>
         {selected !== 'none' ? (
-          <Pressable
-            className="h-12 rounded-xl border border-white/20 items-center justify-center"
-            onPress={onPreview}
-          >
-            <Text className="text-white font-medium">Preview playlist</Text>
+          <Pressable style={styles.previewButton} onPress={onPreview}>
+            <Text style={styles.previewText}>Preview playlist</Text>
           </Pressable>
         ) : null}
-        <Pressable className="h-12 rounded-xl bg-white items-center justify-center" onPress={onContinue}>
-          <Text className="text-black font-semibold">Continue</Text>
+        <Pressable style={onboardingStyles.continueButton} onPress={onContinue}>
+          <Text style={onboardingStyles.continueText}>Continue</Text>
         </Pressable>
       </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  previewButton: {
+    alignItems: 'center',
+    borderColor: '#2E2E36',
+    borderRadius: 12,
+    borderWidth: 1,
+    height: 44,
+    justifyContent: 'center',
+  },
+  previewText: {
+    color: '#F5F5F7',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+});

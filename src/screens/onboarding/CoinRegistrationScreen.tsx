@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Check } from 'lucide-react-native';
 import LinearGradient from 'react-native-linear-gradient';
 
@@ -11,6 +12,7 @@ import { showErrorToast, showSuccessToast } from '../../lib/toast';
 import type { OnboardingStackParamList } from '../../navigation/onboarding/OnboardingNavigator';
 import { useCoins } from '../../providers/CoinsProvider';
 import { COIN_LABELS, COIN_TYPES, type CoinType } from '../../types/coins';
+import { onboardingStyles, setupEyebrow } from './onboardingLayout';
 
 type Step = CoinType | 'done';
 
@@ -46,6 +48,7 @@ function getFirstPendingType(registeredTypes: Set<CoinType>): Step {
 
 export function CoinRegistrationScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<OnboardingStackParamList>>();
+  const insets = useSafeAreaInsets();
   const { coins, registerCoin } = useCoins();
 
   const [registeredTypes, setRegisteredTypes] = useState<Set<CoinType>>(() => getRegisteredTypes(coins));
@@ -154,14 +157,14 @@ export function CoinRegistrationScreen() {
 
   return (
     <View style={styles.root}>
-      <View style={styles.content}>
-        <View style={styles.hero}>
-          <Text style={styles.eyebrow}>SETUP · 1 OF 2</Text>
-          <Text style={styles.title}>
+      <View style={[onboardingStyles.content, { paddingTop: insets.top + 18 }]}>
+        <View style={onboardingStyles.hero}>
+          <Text style={onboardingStyles.eyebrow}>{setupEyebrow(1)}</Text>
+          <Text style={onboardingStyles.title}>
             Pair your{'\n'}
-            <Text style={styles.titleLight}>coins.</Text>
+            <Text style={onboardingStyles.titleLight}>coins.</Text>
           </Text>
-          <Text style={styles.subtitle}>
+          <Text style={onboardingStyles.subtitle}>
             Hold each coin against the top of your iPhone. Once registered, a tap is all it takes.
           </Text>
         </View>
@@ -220,16 +223,18 @@ export function CoinRegistrationScreen() {
         </View>
       </View>
 
-      <View style={styles.footer}>
+      <View style={onboardingStyles.footer}>
         <Pressable
-          style={[styles.continueButton, !allRegistered ? styles.continueButtonDisabled : null]}
+          style={[onboardingStyles.continueButton, !allRegistered ? onboardingStyles.continueButtonDisabled : null]}
           onPress={goToFocusSetup}
           disabled={!allRegistered}
         >
-          <Text style={[styles.continueText, !allRegistered ? styles.continueTextDisabled : null]}>Continue</Text>
+          <Text style={[onboardingStyles.continueText, !allRegistered ? onboardingStyles.continueTextDisabled : null]}>
+            Continue
+          </Text>
         </Pressable>
-        <Pressable style={styles.pairLaterButton} onPress={goToFocusSetup}>
-          <Text style={styles.pairLaterText}>Pair later</Text>
+        <Pressable style={onboardingStyles.skipButton} onPress={goToFocusSetup}>
+          <Text style={onboardingStyles.skipText}>Pair later</Text>
         </Pressable>
       </View>
     </View>
@@ -237,44 +242,7 @@ export function CoinRegistrationScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: '#0A0A0C',
-    paddingHorizontal: 28,
-  },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  hero: {
-    marginBottom: 32,
-  },
-  eyebrow: {
-    color: '#9A9AA2',
-    fontSize: 10.5,
-    fontWeight: '600',
-    letterSpacing: 1.47,
-  },
-  title: {
-    color: '#F5F5F7',
-    fontSize: 38,
-    fontWeight: '700',
-    letterSpacing: -1.3,
-    lineHeight: 40,
-    marginTop: 14,
-  },
-  titleLight: {
-    color: '#9A9AA2',
-    fontWeight: '200',
-  },
-  subtitle: {
-    color: '#9A9AA2',
-    fontSize: 14.5,
-    fontWeight: '300',
-    lineHeight: 24,
-    marginTop: 14,
-    maxWidth: 300,
-  },
+  root: onboardingStyles.root,
   coinList: {
     gap: 12,
   },
@@ -397,38 +365,5 @@ const styles = StyleSheet.create({
   },
   scanSpinner: {
     marginLeft: 4,
-  },
-  footer: {
-    gap: 4,
-    paddingBottom: 30,
-  },
-  continueButton: {
-    alignItems: 'center',
-    backgroundColor: '#F5F5F7',
-    borderRadius: 12,
-    height: 44,
-    justifyContent: 'center',
-  },
-  continueButtonDisabled: {
-    backgroundColor: '#6E6E73',
-  },
-  continueText: {
-    color: '#0A0A0C',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  continueTextDisabled: {
-    color: '#0A0A0C',
-    fontWeight: '500',
-  },
-  pairLaterButton: {
-    alignItems: 'center',
-    height: 42,
-    justifyContent: 'center',
-  },
-  pairLaterText: {
-    color: '#9A9AA2',
-    fontSize: 13,
-    fontWeight: '500',
   },
 });

@@ -1,9 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Contacts from 'react-native-contacts';
+import type { Contact } from 'react-native-contacts';
 
-import { cancelNfcRequest, isNfcCancelError, readCoinRegistrationTagOnce, setNfcBusy } from '../../lib/nfc';
-import { supabase } from '../../lib/supabase';
+import { ManageCoinsPanel } from '../../components/ManageCoinsPanel';
 import {
   hasFocusModeSelection,
   isFocusModeAuthorized,
@@ -11,38 +23,56 @@ import {
   requestFocusModeAuthorization,
   showFocusModeSetupUnavailableAlert,
 } from '../../lib/focusMode';
-import { openFocusSettings } from '../../lib/focusSettings';
+import { lockInDefaultLabel, resetDefaultLabel } from '../../lib/journeyFormat';
 import { openFlowPlaylist } from '../../lib/flowMusic';
 import { requestContactsPermission } from '../../lib/permissions';
-import { parseProtocolUniversalLinkFromUrl } from '../../lib/protocolDeepLink';
+import { supabase } from '../../lib/supabase';
+import { PROTOCOL_CONFIG } from '../../lib/protocolConfig';
+import { PROTOCOL_THEME } from '../../lib/protocolTheme';
 import { useAuth } from '../../providers/AuthProvider';
 import { useCoins } from '../../providers/CoinsProvider';
 import { useUserPreferences, type MusicService } from '../../providers/UserPreferencesProvider';
-import { COIN_LABELS, COIN_TYPES, type Coin, type CoinType } from '../../types/coins';
-import Contacts from 'react-native-contacts';
-import type { Contact } from 'react-native-contacts';
+import { COIN_LABELS, COIN_TYPES, type CoinType } from '../../types/coins';
 
-type RegisterState =
-  | { status: 'idle' }
-  | { status: 'scanning' }
-  | { status: 'registering' };
+type Panel = 'none' | 'coins' | 'account' | 'flow';
+
+function SettingsToggle({
+  value,
+  onValueChange,
+}: {
+  value: boolean;
+  onValueChange: (next: boolean) => void;
+}) {
+  return (
+    <Switch
+      value={value}
+      onValueChange={onValueChange}
+      trackColor={{ false: '#2E2E36', true: '#4ADE80' }}
+      thumbColor="#F5F5F7"
+    />
+  );
+}
+
+function ProtocolIcon({ color, round = true }: { color: string; round?: boolean }) {
+  return (
+    <View style={[styles.setIcon, round ? styles.setIconRound : styles.setIconSquare]}>
+      <View style={[styles.setIconInner, round && styles.setIconInnerRound, { borderColor: color }]} />
+    </View>
+  );
+}
 
 export function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { session, refreshProfile } = useAuth();
-  const { coins, registerCoinStrict, deleteCoin, refresh: refreshCoins } = useCoins();
-  const {
-    musicService,
-    setMusicService,
-    priorityContactIds,
-    setPriorityContactIds,
-  } = useUserPreferences();
+  const { coins } = useCoins();
+  const prefs = useUserPreferences();
 
+  const [panel, setPanel] = useState<Panel>('none');
   const [editingContacts, setEditingContacts] = useState(false);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [allContacts, setAllContacts] = useState<Contact[]>([]);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(
-    () => new Set(priorityContactIds),
+    () => new Set(prefs.priorityContactIds),
   );
   const [screenTimeAuthorized, setScreenTimeAuthorized] = useState(false);
   const [blockingSelections, setBlockingSelections] = useState<Record<'lockin' | 'flow', boolean>>({
@@ -53,15 +83,11 @@ export function SettingsScreen() {
 
   const email = session?.user?.email ?? '';
   const initialUsername = (session?.user?.user_metadata?.username as string | undefined) ?? '';
-
   const [username, setUsername] = useState(initialUsername);
   const [savingUsername, setSavingUsername] = useState(false);
-
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
-
-  const [registerState, setRegisterState] = useState<RegisterState>({ status: 'idle' });
 
   useEffect(() => {
     setUsername(initialUsername);
@@ -81,6 +107,11 @@ export function SettingsScreen() {
     refreshBlockingStatus().catch(() => {});
   }, [refreshBlockingStatus]);
 
+  const pairedCount = useMemo(
+    () => coins.filter((c) => c.active).length,
+    [coins],
+  );
+
   const onChooseBlockingApps = useCallback(
     async (protocol: 'lockin' | 'flow') => {
       setBlockingBusy(protocol);
@@ -92,9 +123,7 @@ export function SettingsScreen() {
         }
         if (isAuthorized) {
           const saved = await presentFocusModePicker(protocol);
-          if (!saved) {
-            showFocusModeSetupUnavailableAlert('picker');
-          }
+          if (!saved) showFocusModeSetupUnavailableAlert('picker');
         } else {
           showFocusModeSetupUnavailableAlert('authorization');
         }
@@ -106,452 +135,293 @@ export function SettingsScreen() {
     [refreshBlockingStatus, screenTimeAuthorized],
   );
 
-  const coinsByType = useMemo(() => {
-    const map = new Map<CoinType, Coin[]>();
-    for (const type of COIN_TYPES) map.set(type, []);
-    for (const c of coins) {
-      if (!c.active) continue;
-      map.get(c.coin_type)?.push(c);
-    }
-    return map;
-  }, [coins]);
+  const onProtocolRow = useCallback(
+    (type: CoinType) => {
+      if (type === 'reset') {
+        Alert.alert(
+          'Reset',
+          `${PROTOCOL_CONFIG.reset.defaultMinutes} min recovery with two optional reflection prompts. Writing can stay blank — use your notebook if you prefer.`,
+        );
+        return;
+      }
+      if (type === 'flow') {
+        setPanel('flow');
+        return;
+      }
+      void onChooseBlockingApps(type);
+    },
+    [onChooseBlockingApps],
+  );
+
+  const protocolSubtitle = useCallback(
+    (type: CoinType): string => {
+      if (type === 'lockin') {
+        return `${blockingSelections.lockin ? 'Apps blocked' : 'No blocklist'} · ${lockInDefaultLabel()}`;
+      }
+      if (type === 'flow') {
+        return `${blockingSelections.flow ? 'Whitelist configured' : 'No whitelist'} · open-ended`;
+      }
+      return resetDefaultLabel();
+    },
+    [blockingSelections],
+  );
 
   const onSaveUsername = useCallback(async () => {
     const userId = session?.user?.id;
-    if (!userId) {
-      Alert.alert('Not signed in', 'Please sign in again.');
-      return;
-    }
-
+    if (!userId) return;
     const clean = username.trim();
     if (clean.length < 3) {
-      Alert.alert('Username too short', 'Please use at least 3 characters.');
+      Alert.alert('Username too short', 'Use at least 3 characters.');
       return;
     }
-
     setSavingUsername(true);
     try {
-      const { error: upsertError } = await supabase.from('profiles').upsert({
-        id: userId,
-        username: clean,
-      });
-      if (upsertError) {
-        Alert.alert('Failed', upsertError.message);
+      const { error } = await supabase.from('profiles').upsert({ id: userId, username: clean });
+      if (error) {
+        Alert.alert('Failed', error.message);
         return;
       }
-
-      const { error: metaError } = await supabase.auth.updateUser({ data: { username: clean } });
-      if (metaError) {
-        Alert.alert('Saved, but…', metaError.message);
-        return;
-      }
-
+      await supabase.auth.updateUser({ data: { username: clean } });
       await refreshProfile();
-      Alert.alert('Saved', 'Your username was updated.');
-    } catch {
-      Alert.alert('Failed', 'Unexpected error. Please try again.');
+      Alert.alert('Saved', 'Username updated.');
     } finally {
       setSavingUsername(false);
     }
   }, [refreshProfile, session?.user?.id, username]);
 
   const onChangePassword = useCallback(async () => {
-    const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) {
-      Alert.alert('Unavailable', 'No email found for this account.');
-      return;
-    }
-    if (currentPassword.length === 0 || newPassword.length < 8) {
-      Alert.alert('Invalid', 'Enter your current password and a new password (min 8 characters).');
-      return;
-    }
-
+    if (!email || currentPassword.length === 0 || newPassword.length < 8) return;
     setChangingPassword(true);
     try {
       const { error: verifyError } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
+        email: email.trim().toLowerCase(),
         password: currentPassword,
       });
       if (verifyError) {
         Alert.alert('Current password is incorrect', verifyError.message);
         return;
       }
-
-      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
-      if (updateError) {
-        Alert.alert('Failed', updateError.message);
-        return;
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) Alert.alert('Failed', error.message);
+      else {
+        setCurrentPassword('');
+        setNewPassword('');
+        Alert.alert('Updated', 'Password changed.');
       }
-
-      setCurrentPassword('');
-      setNewPassword('');
-      Alert.alert('Updated', 'Your password has been changed.');
-    } catch {
-      Alert.alert('Failed', 'Unexpected error. Please try again.');
     } finally {
       setChangingPassword(false);
     }
   }, [currentPassword, email, newPassword]);
 
-  const stopRegistrationScan = useCallback(async () => {
-    setRegisterState({ status: 'idle' });
-    await cancelNfcRequest();
-    // Release the global NFC lock so the live coin-tap listener can resume.
-    setNfcBusy(false);
-  }, []);
-
-  const beginRegister = useCallback(
-    async () => {
-      await stopRegistrationScan();
-      setRegisterState({ status: 'scanning' });
-      // Hold the global NFC lock so the live coin-tap listener stands down.
-      setNfcBusy(true);
-      try {
-        const tag = await readCoinRegistrationTagOnce();
-        setRegisterState({ status: 'registering' });
-
-        if (!tag.ndefUrl) {
-          Alert.alert(
-            'Invalid coin URL',
-            'This coin does not have a readable NDEF URL. Please write the correct RISE URL to the coin and try again.',
-          );
-          return;
-        }
-
-        const coinType = parseProtocolUniversalLinkFromUrl(tag.ndefUrl);
-        if (!coinType) {
-          Alert.alert(
-            'Invalid coin URL',
-            `This coin URL is not valid for RISE:\n\n${tag.ndefUrl}\n\nUse https://nfc.officialrise.com/protocol/lockin, /flow, or /reset.`,
-          );
-          return;
-        }
-
-        const result = await registerCoinStrict(tag.coinId, coinType);
-        if (!result.ok) {
-          Alert.alert('Registration failed', result.message);
-          return;
-        }
-
-        Alert.alert('Registered', `${COIN_LABELS[coinType]} coin linked to your account.`);
-        await refreshCoins();
-      } catch (e: unknown) {
-        if (isNfcCancelError(e)) return;
-        const message = e instanceof Error ? e.message : 'NFC is unavailable.';
-        Alert.alert('Registration failed', message);
-      } finally {
-        setRegisterState({ status: 'idle' });
-        setNfcBusy(false);
-      }
-    },
-    [refreshCoins, registerCoinStrict, stopRegistrationScan],
-  );
-
-  const onDeleteCoin = useCallback(
-    (coin: Coin) => {
-      Alert.alert(
-        `Delete ${COIN_LABELS[coin.coin_type]} coin?`,
-        'You can register a new coin for this mode after deleting this one.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete',
-            style: 'destructive',
-            onPress: () => {
-              void (async () => {
-                const result = await deleteCoin(coin.coin_id);
-                if (!result.ok) {
-                  Alert.alert('Delete failed', result.message);
-                  return;
-                }
-                Alert.alert('Deleted', `${COIN_LABELS[coin.coin_type]} coin removed.`);
-                await refreshCoins();
-              })();
-            },
-          },
-        ],
-      );
-    },
-    [deleteCoin, refreshCoins],
-  );
-
-  useEffect(() => {
-    return () => {
-      void stopRegistrationScan();
-    };
-  }, [stopRegistrationScan]);
-
-  const canSaveUsername = useMemo(() => username.trim().length >= 3 && !savingUsername, [savingUsername, username]);
-  const canChangePassword = useMemo(
-    () => currentPassword.length > 0 && newPassword.length >= 8 && !changingPassword,
-    [changingPassword, currentPassword.length, newPassword.length],
-  );
-
   return (
-    <View className="flex-1 bg-[#0A0A0C]">
+    <View style={styles.root}>
       <ScrollView
-        className="flex-1"
         contentContainerStyle={{
           paddingTop: insets.top + 12,
-          paddingBottom: insets.bottom + 96,
-          paddingHorizontal: 24,
+          paddingBottom: insets.bottom + 100,
+          paddingHorizontal: 28,
         }}
         showsVerticalScrollIndicator={false}
       >
-        <Text className="text-white text-2xl font-semibold mb-6">Settings</Text>
+        <Text style={styles.eyebrow}>Settings</Text>
+        <Text style={styles.title}>
+          Make it yours.{'\n'}
+          <Text style={styles.titleLight}>Once.</Text>
+        </Text>
 
-        <View className="rounded-2xl border border-white/10 bg-zinc-950/60 p-4">
-          <Text className="text-white text-base font-semibold mb-3">Profile</Text>
-          <Text className="text-zinc-400 text-xs mb-2">Email</Text>
-          <View className="h-12 rounded-xl bg-zinc-900/60 border border-white/10 px-4 justify-center">
-            <Text className="text-zinc-300">{email || '—'}</Text>
+        <Text style={styles.groupHd}>Protocols</Text>
+        <View style={styles.card}>
+          {COIN_TYPES.map((type, index) => {
+            const theme = PROTOCOL_THEME[type];
+            const busy = blockingBusy === type;
+            return (
+              <Pressable
+                key={type}
+                style={[styles.row, index < COIN_TYPES.length - 1 && styles.rowBorder]}
+                onPress={() => onProtocolRow(type)}
+                disabled={busy}
+              >
+                <ProtocolIcon color={theme.accent} />
+                <View style={styles.rowTxt}>
+                  <Text style={styles.rowName}>{COIN_LABELS[type]}</Text>
+                  <Text style={styles.rowSub}>{busy ? 'Opening…' : protocolSubtitle(type)}</Text>
+                </View>
+                <Text style={styles.chev}>›</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <Text style={styles.groupHd}>Coins</Text>
+        <View style={styles.card}>
+          <Pressable style={[styles.row, styles.rowBorder]} onPress={() => setPanel('coins')}>
+            <ProtocolIcon color="#C0C4CC" />
+            <View style={styles.rowTxt}>
+              <Text style={styles.rowName}>Manage coins</Text>
+              <Text style={styles.rowSub}>
+                {pairedCount} paired · re-pair or replace
+              </Text>
+            </View>
+            <Text style={styles.chev}>›</Text>
+          </Pressable>
+          <View style={styles.row}>
+            <ProtocolIcon color="#9A9AA2" round={false} />
+            <View style={styles.rowTxt}>
+              <Text style={styles.rowName}>Background tap</Text>
+              <Text style={styles.rowSub}>Start protocols with app closed</Text>
+            </View>
+            <SettingsToggle
+              value={prefs.backgroundTapEnabled}
+              onValueChange={(v) => void prefs.setBackgroundTapEnabled(v)}
+            />
           </View>
-
-          <Text className="text-zinc-400 text-xs mb-2 mt-4">Username</Text>
-          <TextInput
-            className="h-12 rounded-xl bg-zinc-900/60 border border-white/10 px-4 text-white"
-            value={username}
-            onChangeText={setUsername}
-            placeholder="winterstory"
-            placeholderTextColor="#71717a"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <Pressable
-            className={[
-              'mt-4 h-12 rounded-xl items-center justify-center',
-              canSaveUsername ? 'bg-white' : 'bg-zinc-700',
-            ].join(' ')}
-            onPress={onSaveUsername}
-            disabled={!canSaveUsername}
-          >
-            <Text className={canSaveUsername ? 'text-black font-semibold' : 'text-zinc-200 font-semibold'}>
-              {savingUsername ? 'Saving…' : 'Save username'}
-            </Text>
-          </Pressable>
         </View>
 
-        <View className="rounded-2xl border border-white/10 bg-zinc-950/60 p-4 mt-4">
-          <Text className="text-white text-base font-semibold mb-3">Security</Text>
-
-          <Text className="text-zinc-400 text-xs mb-2">Current password</Text>
-          <TextInput
-            className="h-12 rounded-xl bg-zinc-900/60 border border-white/10 px-4 text-white"
-            value={currentPassword}
-            onChangeText={setCurrentPassword}
-            placeholder="••••••••"
-            placeholderTextColor="#71717a"
-            secureTextEntry
-          />
-
-          <Text className="text-zinc-400 text-xs mb-2 mt-4">New password</Text>
-          <TextInput
-            className="h-12 rounded-xl bg-zinc-900/60 border border-white/10 px-4 text-white"
-            value={newPassword}
-            onChangeText={setNewPassword}
-            placeholder="Min 8 characters"
-            placeholderTextColor="#71717a"
-            secureTextEntry
-          />
-
-          <Pressable
-            className={[
-              'mt-4 h-12 rounded-xl items-center justify-center',
-              canChangePassword ? 'bg-white' : 'bg-zinc-700',
-            ].join(' ')}
-            onPress={onChangePassword}
-            disabled={!canChangePassword}
-          >
-            <Text className={canChangePassword ? 'text-black font-semibold' : 'text-zinc-200 font-semibold'}>
-              {changingPassword ? 'Updating…' : 'Change password'}
-            </Text>
+        <Text style={styles.groupHd}>General</Text>
+        <View style={styles.card}>
+          <View style={[styles.row, styles.rowBorder]}>
+            <ProtocolIcon color="#9A9AA2" round={false} />
+            <View style={styles.rowTxt}>
+              <Text style={styles.rowName}>Sounds & haptics</Text>
+            </View>
+            <SettingsToggle
+              value={prefs.soundsHapticsEnabled}
+              onValueChange={(v) => void prefs.setSoundsHapticsEnabled(v)}
+            />
+          </View>
+          <View style={[styles.row, styles.rowBorder]}>
+            <ProtocolIcon color="#9A9AA2" round={false} />
+            <View style={styles.rowTxt}>
+              <Text style={styles.rowName}>Live Activity</Text>
+              <Text style={styles.rowSub}>Timer on lock screen</Text>
+            </View>
+            <SettingsToggle
+              value={prefs.liveActivityEnabled}
+              onValueChange={(v) => void prefs.setLiveActivityEnabled(v)}
+            />
+          </View>
+          <Pressable style={styles.row} onPress={() => setPanel('account')}>
+            <ProtocolIcon color="#9A9AA2" />
+            <View style={styles.rowTxt}>
+              <Text style={styles.rowName}>Account</Text>
+              <Text style={styles.rowSub}>{email || 'Signed in'}</Text>
+            </View>
+            <Text style={styles.chev}>›</Text>
           </Pressable>
         </View>
+      </ScrollView>
 
-        <View className="rounded-2xl border border-white/10 bg-zinc-950/60 p-4 mt-4">
-          <Text className="text-white text-base font-semibold mb-1">FLOW</Text>
-          <Text className="text-zinc-400 text-xs mb-3">Music and priority contacts for FLOW sessions.</Text>
+      <ManageCoinsPanel visible={panel === 'coins'} onClose={() => setPanel('none')} />
 
-          <Text className="text-zinc-400 text-xs mb-2">Music service</Text>
-          <View className="flex-row gap-2 mb-3">
+      <Modal visible={panel === 'flow'} animationType="slide" onRequestClose={() => setPanel('none')}>
+        <View style={[styles.modalRoot, { paddingTop: insets.top + 12 }]}>
+          <Text style={[styles.modalTitle, { color: PROTOCOL_THEME.flow.accent }]}>Flow setup</Text>
+          <Text style={styles.modalSub}>Whitelist, music, and priority contacts — configure once here.</Text>
+          <Pressable style={styles.modalSecondary} onPress={() => void onChooseBlockingApps('flow')}>
+            <Text style={styles.modalSecondaryText}>Edit app whitelist</Text>
+          </Pressable>
+          <Text style={styles.fieldLabel}>Music service</Text>
+          <View style={styles.musicRow}>
             {(['spotify', 'apple', 'none'] as MusicService[]).map((id) => (
               <Pressable
                 key={id}
-                onPress={() => void setMusicService(id)}
-                className={[
-                  'flex-1 py-2 rounded-lg border items-center',
-                  musicService === id ? 'border-white bg-white/10' : 'border-white/15',
-                ].join(' ')}
+                style={[styles.musicChip, prefs.musicService === id && styles.musicChipOn]}
+                onPress={() => void prefs.setMusicService(id)}
               >
-                <Text className="text-white text-xs font-medium capitalize">{id}</Text>
+                <Text style={styles.musicChipText}>{id}</Text>
               </Pressable>
             ))}
           </View>
-          {musicService !== 'none' ? (
+          {prefs.musicService !== 'none' ? (
             <Pressable
-              className="h-10 rounded-xl border border-white/15 items-center justify-center mb-3"
-              onPress={() => void openFlowPlaylist(musicService)}
+              style={styles.modalSecondary}
+              onPress={() => void openFlowPlaylist(prefs.musicService)}
             >
-              <Text className="text-zinc-300 text-sm">Preview FLOW playlist</Text>
+              <Text style={styles.modalSecondaryText}>Preview FLOW playlist</Text>
             </Pressable>
           ) : null}
-
-          <Text className="text-zinc-400 text-xs mb-2">Priority contacts</Text>
-          <Text className="text-zinc-500 text-sm mb-2">
-            {priorityContactIds.length} selected
-          </Text>
           <Pressable
-            className="h-10 rounded-xl border border-white/15 items-center justify-center mb-2"
+            style={styles.modalSecondary}
             onPress={async () => {
               setEditingContacts(true);
-              setSelectedContactIds(new Set(priorityContactIds));
+              setSelectedContactIds(new Set(prefs.priorityContactIds));
               setContactsLoading(true);
-              const granted = await requestContactsPermission();
-              if (granted) {
+              if (await requestContactsPermission()) {
                 try {
-                  const list = await Contacts.getAll();
-                  setAllContacts(list);
+                  setAllContacts(await Contacts.getAll());
                 } catch {
                   Alert.alert('Contacts', 'Could not load contacts.');
                 }
-              } else {
-                Alert.alert('Contacts', 'Permission required to select contacts.');
               }
               setContactsLoading(false);
             }}
           >
-            <Text className="text-zinc-300 text-sm">Update priority contacts</Text>
-          </Pressable>
-          <Pressable
-            className="h-10 rounded-xl border border-white/15 items-center justify-center"
-            onPress={openFocusSettings}
-          >
-            <Text className="text-zinc-300 text-sm">Focus Mode settings</Text>
-          </Pressable>
-        </View>
-
-        <View className="rounded-2xl border border-white/10 bg-zinc-950/60 p-4 mt-4">
-          <Text className="text-white text-base font-semibold mb-1">Focus & app blocking</Text>
-          <Text className="text-zinc-400 text-xs mb-3">
-            Configure iOS Screen Time shields for LOCK IN and FLOW. RESET does not block apps.
-          </Text>
-
-          <View className="gap-3">
-            {(['lockin', 'flow'] as const).map((type) => {
-              const configured = blockingSelections[type];
-              const isBusy = blockingBusy === type;
-              const description =
-                type === 'lockin'
-                  ? 'Block social media, YouTube/video, browsers, email, and messaging apps.'
-                  : 'Block social media, YouTube, Netflix, and streaming apps.';
-              return (
-                <View key={type} className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
-                  <View className="flex-row items-center justify-between gap-3">
-                    <View className="flex-1">
-                      <Text className="text-white font-semibold">{COIN_LABELS[type]}</Text>
-                      <Text className="text-zinc-500 text-xs mt-1">{description}</Text>
-                      <Text className={configured ? 'text-emerald-400 text-xs mt-2' : 'text-zinc-500 text-xs mt-2'}>
-                        {configured ? 'Configured' : 'Not configured'}
-                      </Text>
-                    </View>
-                    <Pressable
-                      className="h-10 px-4 rounded-xl border border-white/15 items-center justify-center"
-                      onPress={() => void onChooseBlockingApps(type)}
-                      disabled={blockingBusy != null}
-                    >
-                      <Text className="text-zinc-200 text-sm">
-                        {isBusy ? 'Opening...' : configured ? 'Edit' : 'Choose'}
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-
-          <Text className="text-zinc-600 text-xs mt-3 leading-5">
-            Priority contacts are handled by iOS Focus/notification settings; Family Controls can block
-            messaging apps as a whole, but cannot allow specific contacts inside Messages.
-          </Text>
-        </View>
-
-        <View className="rounded-2xl border border-white/10 bg-zinc-950/60 p-4 mt-4">
-          <Text className="text-white text-base font-semibold mb-1">Coins</Text>
-          <Text className="text-zinc-400 text-xs mb-4">
-            Register coins from their NDEF URL. Each account can have one active coin per mode.
-          </Text>
-
-          <Pressable
-            className={[
-              'h-12 rounded-xl items-center justify-center mb-4',
-              registerState.status === 'idle' ? 'bg-white' : 'bg-zinc-700',
-            ].join(' ')}
-            onPress={() => void beginRegister()}
-            disabled={registerState.status !== 'idle'}
-          >
-            <Text className={registerState.status === 'idle' ? 'text-black font-semibold' : 'text-zinc-200 font-semibold'}>
-              Register new Coin
+            <Text style={styles.modalSecondaryText}>
+              Priority contacts ({prefs.priorityContactIds.length})
             </Text>
           </Pressable>
-
-          <View className="gap-3">
-            {COIN_TYPES.map((type) => {
-              const registeredCoins = coinsByType.get(type) ?? [];
-              const registered = registeredCoins.length > 0;
-              const label = COIN_LABELS[type];
-              return (
-                <View key={type} className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
-                  <View className="flex-row items-center justify-between">
-                    <View className="flex-1 pr-3">
-                      <Text className="text-white font-semibold">{label}</Text>
-                      <Text className="text-zinc-400 text-xs mt-1">
-                        {registered ? `Registered (${registeredCoins.length})` : 'Not registered'}
-                      </Text>
-                    </View>
-                    {registered ? (
-                      <Pressable
-                        className="h-10 px-4 rounded-xl border border-red-500/40 items-center justify-center"
-                        onPress={() => onDeleteCoin(registeredCoins[0])}
-                        disabled={registerState.status !== 'idle'}
-                      >
-                        <Text className="text-red-300 font-semibold text-sm">Delete</Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-
-                  {registered ? (
-                    <View className="mt-3 gap-1">
-                      {registeredCoins.slice(0, 3).map((coin) => (
-                        <Text key={coin.coin_id} className="text-zinc-500 text-xs">
-                          {coin.coin_id}
-                        </Text>
-                      ))}
-                      {registeredCoins.length > 3 ? (
-                        <Text className="text-zinc-500 text-xs">+{registeredCoins.length - 3} more</Text>
-                      ) : null}
-                    </View>
-                  ) : null}
-                </View>
-              );
-            })}
-          </View>
+          <Pressable style={styles.modalClose} onPress={() => setPanel('none')}>
+            <Text style={styles.modalCloseText}>Done</Text>
+          </Pressable>
         </View>
-      </ScrollView>
+      </Modal>
 
-      {editingContacts ? (
-        <View className="absolute inset-0 px-4 pt-14 pb-8" style={{ backgroundColor: 'rgba(10,10,12,0.9)' }}>
-          <Text className="text-white text-xl font-bold text-center mb-4">Priority contacts</Text>
+      <Modal visible={panel === 'account'} animationType="slide" onRequestClose={() => setPanel('none')}>
+        <ScrollView
+          contentContainerStyle={[styles.modalRoot, { paddingTop: insets.top + 12, paddingBottom: 40 }]}
+        >
+          <Text style={styles.modalTitle}>Account</Text>
+          <Text style={styles.fieldLabel}>Email</Text>
+          <Text style={styles.fieldValue}>{email || '—'}</Text>
+          <Text style={styles.fieldLabel}>Username</Text>
+          <TextInput style={styles.input} value={username} onChangeText={setUsername} autoCapitalize="none" />
+          <Pressable style={styles.modalPrimary} onPress={() => void onSaveUsername()} disabled={savingUsername}>
+            <Text style={styles.modalPrimaryText}>{savingUsername ? 'Saving…' : 'Save username'}</Text>
+          </Pressable>
+          <Text style={[styles.fieldLabel, { marginTop: 20 }]}>Change password</Text>
+          <TextInput
+            style={styles.input}
+            value={currentPassword}
+            onChangeText={setCurrentPassword}
+            secureTextEntry
+            placeholder="Current password"
+            placeholderTextColor="#5C5C66"
+          />
+          <TextInput
+            style={styles.input}
+            value={newPassword}
+            onChangeText={setNewPassword}
+            secureTextEntry
+            placeholder="New password (min 8)"
+            placeholderTextColor="#5C5C66"
+          />
+          <Pressable style={styles.modalPrimary} onPress={() => void onChangePassword()} disabled={changingPassword}>
+            <Text style={styles.modalPrimaryText}>{changingPassword ? 'Updating…' : 'Update password'}</Text>
+          </Pressable>
+          <Pressable style={styles.modalClose} onPress={() => setPanel('none')}>
+            <Text style={styles.modalCloseText}>Done</Text>
+          </Pressable>
+        </ScrollView>
+      </Modal>
+
+      <Modal visible={editingContacts} animationType="slide" onRequestClose={() => setEditingContacts(false)}>
+        <View style={[styles.modalRoot, { paddingTop: insets.top + 12 }]}>
+          <Text style={styles.modalTitle}>Priority contacts</Text>
           {contactsLoading ? (
-            <ActivityIndicator color="#fff" className="mt-8" />
+            <ActivityIndicator color="#fff" />
           ) : (
-            <ScrollView className="flex-1">
+            <ScrollView style={styles.modalScroll}>
               {allContacts.slice(0, 200).map((c) => {
                 const id = c.recordID;
-                const label = [c.givenName, c.familyName].filter(Boolean).join(' ') || c.phoneNumbers[0]?.number || 'Unknown';
+                const label =
+                  [c.givenName, c.familyName].filter(Boolean).join(' ') ||
+                  c.phoneNumbers[0]?.number ||
+                  'Unknown';
                 const on = selectedContactIds.has(id);
                 return (
                   <Pressable
                     key={id}
+                    style={styles.contactRow}
                     onPress={() => {
                       setSelectedContactIds((prev) => {
                         const next = new Set(prev);
@@ -560,56 +430,144 @@ export function SettingsScreen() {
                         return next;
                       });
                     }}
-                    className="py-3 border-b border-white/5 flex-row justify-between items-center"
                   >
-                    <Text className="text-white flex-1" numberOfLines={1}>{label}</Text>
-                    <Text className="text-zinc-500">{on ? '✓' : ''}</Text>
+                    <Text style={styles.contactName}>{label}</Text>
+                    <Text style={styles.contactCheck}>{on ? '✓' : ''}</Text>
                   </Pressable>
                 );
               })}
             </ScrollView>
           )}
           <Pressable
-            className="mt-4 h-12 rounded-xl bg-white items-center justify-center"
+            style={styles.modalPrimary}
             onPress={async () => {
-              await setPriorityContactIds([...selectedContactIds]);
+              await prefs.setPriorityContactIds([...selectedContactIds]);
               setEditingContacts(false);
             }}
           >
-            <Text className="text-black font-semibold">Save</Text>
+            <Text style={styles.modalPrimaryText}>Save</Text>
           </Pressable>
-          <Pressable className="mt-2 h-12 items-center justify-center" onPress={() => setEditingContacts(false)}>
-            <Text className="text-zinc-400">Cancel</Text>
+          <Pressable style={styles.modalClose} onPress={() => setEditingContacts(false)}>
+            <Text style={styles.modalCloseText}>Cancel</Text>
           </Pressable>
         </View>
-      ) : null}
-
-      {registerState.status !== 'idle' ? (
-        <View className="absolute inset-0 items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}>
-          <View className="w-[86%] rounded-2xl border border-white/10 bg-zinc-950 p-5">
-            <Text className="text-white text-lg font-semibold text-center">
-              {registerState.status === 'registering' ? 'Registering…' : 'Tap your Coin Please'}
-            </Text>
-            <Text className="text-zinc-400 text-center mt-2 leading-5">
-              Hold the coin near the back of your phone. The app will read its UID and RISE URL.
-            </Text>
-            <View className="items-center mt-5">
-              {registerState.status === 'registering' ? (
-                <ActivityIndicator size="large" color="#ffffff" />
-              ) : (
-                <View className="h-16 w-16 rounded-full border-2 border-dashed border-white/30 items-center justify-center">
-                  <Text className="text-white/50 text-xs text-center px-2">NFC</Text>
-                </View>
-              )}
-            </View>
-
-            <Pressable className="mt-6 h-12 rounded-xl bg-white items-center justify-center" onPress={() => void stopRegistrationScan()}>
-              <Text className="text-black font-semibold">Cancel</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
+      </Modal>
     </View>
   );
 }
 
+const styles = StyleSheet.create({
+  root: { backgroundColor: '#0A0A0C', flex: 1 },
+  eyebrow: {
+    color: '#5C5C66',
+    fontSize: 10.5,
+    fontWeight: '600',
+    letterSpacing: 1.47,
+    textTransform: 'uppercase',
+  },
+  title: {
+    color: '#F5F5F7',
+    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: -0.8,
+    lineHeight: 32,
+    marginTop: 8,
+  },
+  titleLight: { color: '#9A9AA2', fontWeight: '200' },
+  groupHd: {
+    color: '#5C5C66',
+    fontSize: 10.5,
+    fontWeight: '600',
+    letterSpacing: 1.47,
+    marginBottom: 10,
+    marginTop: 26,
+    textTransform: 'uppercase',
+  },
+  card: {
+    backgroundColor: '#131316',
+    borderColor: '#222228',
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  row: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 13,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+  },
+  rowBorder: { borderBottomColor: '#222228', borderBottomWidth: 1 },
+  setIcon: {
+    alignItems: 'center',
+    backgroundColor: '#18181D',
+    borderColor: '#2E2E36',
+    borderWidth: 1,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
+  },
+  setIconRound: { borderRadius: 15 },
+  setIconSquare: { borderRadius: 9 },
+  setIconInner: { borderWidth: 1.5, height: 12, width: 12 },
+  setIconInnerRound: { borderRadius: 6 },
+  rowTxt: { flex: 1 },
+  rowName: { color: '#F5F5F7', fontSize: 13.5, fontWeight: '500' },
+  rowSub: { color: '#5C5C66', fontSize: 11, fontWeight: '300', marginTop: 2 },
+  chev: { color: '#5C5C66', fontSize: 18 },
+  modalRoot: { backgroundColor: '#0A0A0C', flex: 1, paddingHorizontal: 28 },
+  modalTitle: { color: '#F5F5F7', fontSize: 24, fontWeight: '700', marginBottom: 8 },
+  modalSub: { color: '#9A9AA2', fontSize: 14, lineHeight: 22, marginBottom: 20 },
+  modalScroll: { flex: 1, marginTop: 12 },
+  modalPrimary: {
+    alignItems: 'center',
+    backgroundColor: '#F5F5F7',
+    borderRadius: 12,
+    height: 44,
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  modalPrimaryText: { color: '#0A0A0C', fontWeight: '600' },
+  modalSecondary: {
+    alignItems: 'center',
+    borderColor: '#2E2E36',
+    borderRadius: 12,
+    borderWidth: 1,
+    height: 44,
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  modalSecondaryText: { color: '#9A9AA2', fontSize: 14 },
+  modalClose: { alignItems: 'center', height: 44, justifyContent: 'center', marginTop: 8 },
+  modalCloseText: { color: '#9A9AA2', fontSize: 14, fontWeight: '500' },
+  fieldLabel: { color: '#5C5C66', fontSize: 11, marginBottom: 6, marginTop: 12 },
+  fieldValue: { color: '#F5F5F7', fontSize: 14, marginBottom: 8 },
+  input: {
+    backgroundColor: '#131316',
+    borderColor: '#222228',
+    borderRadius: 12,
+    borderWidth: 1,
+    color: '#F5F5F7',
+    height: 44,
+    marginBottom: 10,
+    paddingHorizontal: 14,
+  },
+  musicRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  musicChip: {
+    borderColor: '#2E2E36',
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    paddingVertical: 8,
+  },
+  musicChipOn: { borderColor: '#E8C56A', backgroundColor: 'rgba(232,197,106,0.08)' },
+  musicChipText: { color: '#F5F5F7', fontSize: 12, textAlign: 'center', textTransform: 'capitalize' },
+  contactRow: {
+    borderBottomColor: '#222228',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    paddingVertical: 12,
+  },
+  contactName: { color: '#F5F5F7', flex: 1 },
+  contactCheck: { color: '#E8C56A' },
+});

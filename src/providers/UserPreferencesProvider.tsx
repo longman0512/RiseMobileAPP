@@ -7,6 +7,9 @@ const KEYS = {
   musicService: 'rise.musicService',
   priorityContactIds: 'rise.priorityContactIds',
   focusSetupComplete: 'rise.focusSetupComplete',
+  backgroundTapEnabled: 'rise.backgroundTapEnabled',
+  soundsHapticsEnabled: 'rise.soundsHapticsEnabled',
+  liveActivityEnabled: 'rise.liveActivityEnabled',
 } as const;
 
 type UserPreferencesContextValue = {
@@ -14,9 +17,15 @@ type UserPreferencesContextValue = {
   musicService: MusicService;
   priorityContactIds: string[];
   focusSetupComplete: boolean;
+  backgroundTapEnabled: boolean;
+  soundsHapticsEnabled: boolean;
+  liveActivityEnabled: boolean;
   setMusicService: (service: MusicService) => Promise<void>;
   setPriorityContactIds: (ids: string[]) => Promise<void>;
   setFocusSetupComplete: (complete: boolean) => Promise<void>;
+  setBackgroundTapEnabled: (enabled: boolean) => Promise<void>;
+  setSoundsHapticsEnabled: (enabled: boolean) => Promise<void>;
+  setLiveActivityEnabled: (enabled: boolean) => Promise<void>;
 };
 
 const UserPreferencesContext = createContext<UserPreferencesContextValue | null>(null);
@@ -26,17 +35,28 @@ function parseMusicService(value: string | null): MusicService {
   return 'none';
 }
 
+function parseBool(value: string | null, defaultValue: boolean): boolean {
+  if (value == null) return defaultValue;
+  return value === 'true';
+}
+
 export function UserPreferencesProvider({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
   const [musicService, setMusicServiceState] = useState<MusicService>('none');
   const [priorityContactIds, setPriorityContactIdsState] = useState<string[]>([]);
   const [focusSetupComplete, setFocusSetupCompleteState] = useState(false);
+  const [backgroundTapEnabled, setBackgroundTapEnabledState] = useState(true);
+  const [soundsHapticsEnabled, setSoundsHapticsEnabledState] = useState(true);
+  const [liveActivityEnabled, setLiveActivityEnabledState] = useState(true);
 
   const refresh = useCallback(async () => {
-    const [music, contacts, focus] = await Promise.all([
+    const [music, contacts, focus, bgTap, sounds, liveActivity] = await Promise.all([
       AsyncStorage.getItem(KEYS.musicService),
       AsyncStorage.getItem(KEYS.priorityContactIds),
       AsyncStorage.getItem(KEYS.focusSetupComplete),
+      AsyncStorage.getItem(KEYS.backgroundTapEnabled),
+      AsyncStorage.getItem(KEYS.soundsHapticsEnabled),
+      AsyncStorage.getItem(KEYS.liveActivityEnabled),
     ]);
     setMusicServiceState(parseMusicService(music));
     try {
@@ -45,6 +65,9 @@ export function UserPreferencesProvider({ children }: { children: React.ReactNod
       setPriorityContactIdsState([]);
     }
     setFocusSetupCompleteState(focus === 'true');
+    setBackgroundTapEnabledState(parseBool(bgTap, true));
+    setSoundsHapticsEnabledState(parseBool(sounds, true));
+    setLiveActivityEnabledState(parseBool(liveActivity, true));
     setHydrated(true);
   }, []);
 
@@ -67,24 +90,51 @@ export function UserPreferencesProvider({ children }: { children: React.ReactNod
     setFocusSetupCompleteState(complete);
   }, []);
 
+  const setBackgroundTapEnabled = useCallback(async (enabled: boolean) => {
+    await AsyncStorage.setItem(KEYS.backgroundTapEnabled, enabled ? 'true' : 'false');
+    setBackgroundTapEnabledState(enabled);
+  }, []);
+
+  const setSoundsHapticsEnabled = useCallback(async (enabled: boolean) => {
+    await AsyncStorage.setItem(KEYS.soundsHapticsEnabled, enabled ? 'true' : 'false');
+    setSoundsHapticsEnabledState(enabled);
+  }, []);
+
+  const setLiveActivityEnabled = useCallback(async (enabled: boolean) => {
+    await AsyncStorage.setItem(KEYS.liveActivityEnabled, enabled ? 'true' : 'false');
+    setLiveActivityEnabledState(enabled);
+  }, []);
+
   const value = useMemo<UserPreferencesContextValue>(
     () => ({
       loading: !hydrated,
       musicService,
       priorityContactIds,
       focusSetupComplete,
+      backgroundTapEnabled,
+      soundsHapticsEnabled,
+      liveActivityEnabled,
       setMusicService,
       setPriorityContactIds,
       setFocusSetupComplete,
+      setBackgroundTapEnabled,
+      setSoundsHapticsEnabled,
+      setLiveActivityEnabled,
     }),
     [
       hydrated,
       musicService,
       priorityContactIds,
       focusSetupComplete,
+      backgroundTapEnabled,
+      soundsHapticsEnabled,
+      liveActivityEnabled,
       setMusicService,
       setPriorityContactIds,
       setFocusSetupComplete,
+      setBackgroundTapEnabled,
+      setSoundsHapticsEnabled,
+      setLiveActivityEnabled,
     ],
   );
 

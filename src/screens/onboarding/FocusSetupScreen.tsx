@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Platform, Pressable, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { OnboardingStackParamList } from '../../navigation/onboarding/OnboardingNavigator';
 import {
@@ -13,6 +14,7 @@ import {
 } from '../../lib/focusMode';
 import { useUserPreferences } from '../../providers/UserPreferencesProvider';
 import type { CoinType } from '../../types/coins';
+import { onboardingStyles, setupEyebrow } from './onboardingLayout';
 
 type BlockingStep = {
   protocol: CoinType;
@@ -56,6 +58,7 @@ const ANDROID_BULLETS = [
 
 export function FocusSetupScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<OnboardingStackParamList>>();
+  const insets = useSafeAreaInsets();
   const { setFocusSetupComplete } = useUserPreferences();
   const isIos = Platform.OS === 'ios';
   const [iosStep, setIosStep] = useState(0);
@@ -69,6 +72,8 @@ export function FocusSetupScreen() {
 
   const currentIos = IOS_BLOCKING_STEPS[iosStep];
   const allIosReady = authorized && selections.lockin && selections.flow;
+  const canAdvanceCurrent = !currentIos.requiresPicker || selections[currentIos.protocol];
+  const isLastStep = iosStep === IOS_BLOCKING_STEPS.length - 1;
 
   useEffect(() => {
     if (!isIos) return;
@@ -95,19 +100,19 @@ export function FocusSetupScreen() {
     navigation.navigate('MusicPicker');
   };
 
-  const onSkip = async () => {
+  const onSkip = () => {
     navigation.navigate('MusicPicker');
   };
 
   const onChooseApps = async (protocol: CoinType) => {
     setBusy(true);
     try {
-      let isAuthorized = authorized;
-      if (!isAuthorized) {
-        isAuthorized = await requestFocusModeAuthorization();
-        setAuthorized(isAuthorized);
+      let isAuthorizedNow = authorized;
+      if (!isAuthorizedNow) {
+        isAuthorizedNow = await requestFocusModeAuthorization();
+        setAuthorized(isAuthorizedNow);
       }
-      if (!isAuthorized) {
+      if (!isAuthorizedNow) {
         showFocusModeSetupUnavailableAlert('authorization');
         return;
       }
@@ -123,109 +128,209 @@ export function FocusSetupScreen() {
     }
   };
 
-  if (!isIos) {
-    return (
-      <View className="flex-1 bg-[#0A0A0C] px-6 py-10">
-        <View className="flex-1 justify-center">
-          <Text className="text-white text-3xl font-bold text-center">Focus &amp; apps</Text>
-          <Text className="text-zinc-400 text-center mt-3 leading-6">
-            Set up app limits so FLOW stays filtered, not fully blocked.
+  const renderFooterPrimary = () => {
+    if (!isIos) {
+      return (
+        <Pressable style={onboardingStyles.continueButton} onPress={onContinue}>
+          <Text style={onboardingStyles.continueText}>Continue</Text>
+        </Pressable>
+      );
+    }
+
+    if (!isLastStep) {
+      return (
+        <Pressable
+          style={[onboardingStyles.continueButton, !canAdvanceCurrent ? onboardingStyles.continueButtonDisabled : null]}
+          onPress={() => setIosStep((s) => s + 1)}
+          disabled={!canAdvanceCurrent}
+        >
+          <Text
+            style={[
+              onboardingStyles.continueText,
+              !canAdvanceCurrent ? onboardingStyles.continueTextDisabled : null,
+            ]}
+          >
+            Next mode
           </Text>
-          <View className="mt-8 gap-2">
-            {ANDROID_BULLETS.map((line) => (
-              <Text key={line} className="text-zinc-500 text-sm leading-5">
-                - {line}
-              </Text>
-            ))}
-          </View>
-        </View>
-        <View className="pb-10 gap-3">
-          <Pressable className="h-12 rounded-xl bg-white items-center justify-center" onPress={onContinue}>
-            <Text className="text-black font-semibold">Continue</Text>
-          </Pressable>
-          <Pressable className="h-12 items-center justify-center" onPress={onSkip}>
-            <Text className="text-zinc-400">Skip for now</Text>
-          </Pressable>
-        </View>
-      </View>
+        </Pressable>
+      );
+    }
+
+    return (
+      <Pressable
+        style={[onboardingStyles.continueButton, !allIosReady ? onboardingStyles.continueButtonDisabled : null]}
+        onPress={onContinue}
+        disabled={!allIosReady}
+      >
+        <Text style={[onboardingStyles.continueText, !allIosReady ? onboardingStyles.continueTextDisabled : null]}>
+          Continue
+        </Text>
+      </Pressable>
     );
-  }
+  };
+
+  const heroTitle = isIos ? currentIos.title : 'Focus & apps';
+  const heroSubtitle = isIos
+    ? currentIos.description
+    : 'Set up app limits so FLOW stays filtered, not fully blocked.';
 
   return (
-    <View className="flex-1 bg-[#0A0A0C] px-6 py-10">
-      <Text className="text-zinc-500 text-center text-sm mb-6">
-        Step {iosStep + 1} of {IOS_BLOCKING_STEPS.length}
-      </Text>
-      <View className="flex-1 justify-center">
-        <Text className="text-white text-2xl font-bold text-center">{currentIos.title}</Text>
-        <Text className="text-zinc-400 text-sm leading-6 text-center mt-6">
-          {currentIos.description}
-        </Text>
-
-        {currentIos.requiresPicker ? (
-          <>
-            <Pressable
-              className={[
-                'mt-8 h-12 rounded-xl items-center justify-center',
-                selections[currentIos.protocol]
-                  ? 'border border-emerald-500 bg-emerald-500/10'
-                  : 'bg-white',
-              ].join(' ')}
-              onPress={() => onChooseApps(currentIos.protocol)}
-              disabled={busy}
-            >
-              <Text
-                className={
-                  selections[currentIos.protocol]
-                    ? 'text-emerald-300 font-semibold'
-                    : 'text-black font-semibold'
-                }
-              >
-                {busy ? 'Opening...' : currentIos.pickerLabel}
-              </Text>
-            </Pressable>
-            <Text className="text-zinc-500 text-center text-xs mt-3">
-              {selections[currentIos.protocol] ? 'Configured' : 'Not configured yet'}
+    <View style={onboardingStyles.root}>
+      <View style={[onboardingStyles.content, { paddingTop: insets.top + 18 }]}>
+        <View style={onboardingStyles.hero}>
+          <Text style={onboardingStyles.eyebrow}>{setupEyebrow(2)}</Text>
+          {isIos ? (
+            <Text style={styles.modeLabel}>
+              Mode {iosStep + 1} of {IOS_BLOCKING_STEPS.length}
             </Text>
-          </>
+          ) : null}
+          <Text style={onboardingStyles.title}>{heroTitle}</Text>
+          <Text style={onboardingStyles.subtitle}>{heroSubtitle}</Text>
+        </View>
+
+        {isIos ? (
+          <View style={styles.hintBox}>
+            {currentIos.requiresPicker ? (
+              <>
+                <Pressable
+                  style={[
+                    styles.actionButton,
+                    selections[currentIos.protocol] ? styles.actionButtonDone : null,
+                  ]}
+                  onPress={() => onChooseApps(currentIos.protocol)}
+                  disabled={busy}
+                >
+                  <Text
+                    style={[
+                      styles.actionButtonText,
+                      selections[currentIos.protocol] ? styles.actionButtonTextDone : null,
+                    ]}
+                  >
+                    {busy ? 'Opening...' : currentIos.pickerLabel}
+                  </Text>
+                </Pressable>
+                <Text style={styles.statusText}>
+                  {selections[currentIos.protocol] ? 'Configured' : 'Not configured yet'}
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.hintCopy}>No app picker is needed for RESET.</Text>
+            )}
+          </View>
         ) : (
-          <Text className="text-zinc-500 text-center text-xs mt-8">
-            No app picker is needed for RESET.
-          </Text>
+          <View style={[styles.hintBox, styles.hintBoxRow]}>
+            <View style={styles.hintIcon}>
+              <View style={styles.hintRingOuter} />
+              <View style={styles.hintRingInner} />
+            </View>
+            <View style={styles.hintBody}>
+              {ANDROID_BULLETS.map((line) => (
+                <Text key={line} style={styles.hintCopy}>
+                  - {line}
+                </Text>
+              ))}
+            </View>
+          </View>
         )}
       </View>
-      <View className="pb-10 gap-3">
-        {iosStep < IOS_BLOCKING_STEPS.length - 1 ? (
-          <Pressable
-            className="h-12 rounded-xl bg-white items-center justify-center"
-            onPress={() => setIosStep((s) => s + 1)}
-            disabled={currentIos.requiresPicker && !selections[currentIos.protocol]}
-          >
-            <Text
-              className={
-                !currentIos.requiresPicker || selections[currentIos.protocol]
-                  ? 'text-black font-semibold'
-                  : 'text-zinc-500 font-semibold'
-              }
-            >
-              Next mode
-            </Text>
-          </Pressable>
-        ) : (
-          <Pressable
-            className="h-12 rounded-xl bg-white items-center justify-center"
-            onPress={onContinue}
-            disabled={!allIosReady}
-          >
-            <Text className={allIosReady ? 'text-black font-semibold' : 'text-zinc-500 font-semibold'}>
-              Continue
-            </Text>
-          </Pressable>
-        )}
-        <Pressable className="h-12 items-center justify-center" onPress={onSkip}>
-          <Text className="text-zinc-400">Skip for now</Text>
+
+      <View style={onboardingStyles.footer}>
+        {renderFooterPrimary()}
+        <Pressable style={onboardingStyles.skipButton} onPress={onSkip}>
+          <Text style={onboardingStyles.skipText}>Skip for now</Text>
         </Pressable>
       </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  modeLabel: {
+    color: '#5C5C66',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.8,
+    marginTop: 10,
+    textAlign: 'left',
+    textTransform: 'uppercase',
+  },
+  hintBox: {
+    alignItems: 'stretch',
+    borderColor: '#2E2E36',
+    borderRadius: 16,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    gap: 12,
+    minHeight: 72,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+  },
+  hintBoxRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 14,
+  },
+  hintIcon: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderColor: '#9A9AA2',
+    borderRadius: 19,
+    borderWidth: 1.5,
+    height: 38,
+    justifyContent: 'center',
+    width: 38,
+  },
+  hintRingOuter: {
+    borderColor: 'rgba(92,92,102,0.25)',
+    borderRadius: 33,
+    borderWidth: 1,
+    height: 66,
+    position: 'absolute',
+    width: 66,
+  },
+  hintRingInner: {
+    borderColor: 'rgba(92,92,102,0.5)',
+    borderRadius: 26,
+    borderWidth: 1,
+    height: 52,
+    position: 'absolute',
+    width: 52,
+  },
+  hintBody: {
+    flex: 1,
+    gap: 6,
+  },
+  hintCopy: {
+    color: '#9A9AA2',
+    fontSize: 12.5,
+    fontWeight: '300',
+    lineHeight: 20,
+    textAlign: 'left',
+  },
+  actionButton: {
+    alignItems: 'center',
+    backgroundColor: '#F5F5F7',
+    borderRadius: 12,
+    height: 44,
+    justifyContent: 'center',
+  },
+  actionButtonDone: {
+    backgroundColor: 'rgba(34,197,94,0.12)',
+    borderColor: '#22C55E',
+    borderWidth: 1,
+  },
+  actionButtonText: {
+    color: '#0A0A0C',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  actionButtonTextDone: {
+    color: '#22C55E',
+  },
+  statusText: {
+    color: '#5C5C66',
+    fontSize: 11,
+    fontWeight: '300',
+    textAlign: 'left',
+  },
+});

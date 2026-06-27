@@ -3,18 +3,21 @@ import {
   ActivityIndicator,
   FlatList,
   Pressable,
+  StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import Contacts from 'react-native-contacts';
 import type { Contact } from 'react-native-contacts';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { OnboardingStackParamList } from '../../navigation/onboarding/OnboardingNavigator';
 import { requestContactsPermission } from '../../lib/permissions';
 import { useCoins } from '../../providers/CoinsProvider';
 import { useOnboardingState } from '../../providers/OnboardingStateProvider';
 import { useUserPreferences } from '../../providers/UserPreferencesProvider';
+import { onboardingStyles, setupEyebrow } from './onboardingLayout';
 
 function contactKey(c: Contact): string {
   return c.recordID;
@@ -28,6 +31,7 @@ function contactLabel(c: Contact): string {
 }
 
 export function PriorityContactsScreen() {
+  const insets = useSafeAreaInsets();
   const onboarding = useOnboardingState();
   const { dismissCoinOnboarding } = useCoins();
   const { priorityContactIds, setPriorityContactIds } = useUserPreferences();
@@ -93,75 +97,158 @@ export function PriorityContactsScreen() {
   };
 
   return (
-    <View className="flex-1 bg-[#0A0A0C] px-6 pt-10">
-      <Text className="text-white text-3xl font-bold text-center">Priority contacts</Text>
-      <Text className="text-zinc-400 text-center mt-3 text-sm leading-5 px-2">
-        During FLOW, only people you choose can reach you (when Focus Mode is configured).
-      </Text>
-
-      <TextInput
-        className="mt-6 h-11 rounded-xl border border-white/10 bg-zinc-900/80 px-4 text-white"
-        placeholder="Search contacts"
-        placeholderTextColor="#52525b"
-        value={query}
-        onChangeText={setQuery}
-      />
-
-      {loading ? (
-        <ActivityIndicator className="mt-12" color="#fff" />
-      ) : permissionDenied ? (
-        <View className="mt-8">
-          <Text className="text-zinc-500 text-center text-sm">
-            Contacts access was not granted. You can add priority contacts later in Settings.
+    <View style={onboardingStyles.root}>
+      <View style={[styles.content, { paddingTop: insets.top + 18 }]}>
+        <View style={onboardingStyles.hero}>
+          <Text style={onboardingStyles.eyebrow}>{setupEyebrow(4)}</Text>
+          <Text style={onboardingStyles.title}>
+            Priority{'\n'}
+            <Text style={onboardingStyles.titleLight}>contacts.</Text>
           </Text>
-          <Pressable
-            className="mt-4 h-11 rounded-xl border border-white/20 items-center justify-center"
-            onPress={() => void loadContacts()}
-          >
-            <Text className="text-white">Try again</Text>
-          </Pressable>
+          <Text style={onboardingStyles.subtitle}>
+            During FLOW, only people you choose can reach you (when Focus Mode is configured).
+          </Text>
         </View>
-      ) : (
-        <FlatList
-          className="mt-4 flex-1"
-          data={filtered}
-          keyExtractor={contactKey}
-          renderItem={({ item }) => {
-            const id = contactKey(item);
-            const isOn = selected.has(id);
-            return (
-              <Pressable
-                onPress={() => toggle(id)}
-                className="py-3 border-b border-white/5 flex-row items-center justify-between"
-              >
-                <Text className="text-white flex-1 pr-2" numberOfLines={1}>
-                  {contactLabel(item)}
-                </Text>
-                <View
-                  className={[
-                    'w-5 h-5 rounded border items-center justify-center',
-                    isOn ? 'bg-white border-white' : 'border-zinc-600',
-                  ].join(' ')}
-                >
-                  {isOn ? <Text className="text-black text-xs font-bold">✓</Text> : null}
-                </View>
-              </Pressable>
-            );
-          }}
-        />
-      )}
 
-      <View className="pb-10 pt-3 gap-3">
-        <Text className="text-zinc-600 text-center text-xs">
-          {selected.size} selected
-        </Text>
-        <Pressable className="h-12 rounded-xl bg-white items-center justify-center" onPress={onContinue}>
-          <Text className="text-black font-semibold">Continue</Text>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search contacts"
+          placeholderTextColor="#5C5C66"
+          value={query}
+          onChangeText={setQuery}
+        />
+
+        {loading ? (
+          <ActivityIndicator color="#F5F5F7" style={styles.loader} />
+        ) : permissionDenied ? (
+          <View style={styles.deniedWrap}>
+            <Text style={styles.deniedText}>
+              Contacts access was not granted. You can add priority contacts later in Settings.
+            </Text>
+            <Pressable style={styles.retryButton} onPress={() => void loadContacts()}>
+              <Text style={styles.retryText}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <FlatList
+            style={styles.list}
+            data={filtered}
+            keyExtractor={contactKey}
+            showsVerticalScrollIndicator={false}
+            renderItem={({ item }) => {
+              const id = contactKey(item);
+              const isOn = selected.has(id);
+              return (
+                <Pressable onPress={() => toggle(id)} style={styles.contactRow}>
+                  <Text style={styles.contactLabel} numberOfLines={1}>
+                    {contactLabel(item)}
+                  </Text>
+                  <View style={[styles.checkBox, isOn ? styles.checkBoxOn : null]}>
+                    {isOn ? <Text style={styles.checkMark}>✓</Text> : null}
+                  </View>
+                </Pressable>
+              );
+            }}
+          />
+        )}
+      </View>
+
+      <View style={onboardingStyles.footer}>
+        <Text style={styles.selectedCount}>{selected.size} selected</Text>
+        <Pressable style={onboardingStyles.continueButton} onPress={onContinue}>
+          <Text style={onboardingStyles.continueText}>Continue</Text>
         </Pressable>
-        <Pressable className="h-12 items-center justify-center" onPress={onSkip}>
-          <Text className="text-zinc-400">Skip</Text>
+        <Pressable style={onboardingStyles.skipButton} onPress={onSkip}>
+          <Text style={onboardingStyles.skipText}>Skip for now</Text>
         </Pressable>
       </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  content: {
+    flex: 1,
+  },
+  searchInput: {
+    backgroundColor: '#131316',
+    borderColor: '#222228',
+    borderRadius: 12,
+    borderWidth: 1,
+    color: '#F5F5F7',
+    fontSize: 14,
+    height: 44,
+    marginBottom: 12,
+    paddingHorizontal: 14,
+  },
+  loader: {
+    marginTop: 24,
+  },
+  deniedWrap: {
+    marginTop: 16,
+  },
+  deniedText: {
+    color: '#9A9AA2',
+    fontSize: 13,
+    fontWeight: '300',
+    lineHeight: 20,
+    textAlign: 'left',
+  },
+  retryButton: {
+    alignItems: 'center',
+    borderColor: '#2E2E36',
+    borderRadius: 12,
+    borderWidth: 1,
+    height: 44,
+    justifyContent: 'center',
+    marginTop: 12,
+  },
+  retryText: {
+    color: '#F5F5F7',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  list: {
+    flex: 1,
+  },
+  contactRow: {
+    alignItems: 'center',
+    borderBottomColor: '#222228',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+  },
+  contactLabel: {
+    color: '#F5F5F7',
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '400',
+    paddingRight: 12,
+  },
+  checkBox: {
+    alignItems: 'center',
+    borderColor: '#5C5C66',
+    borderRadius: 4,
+    borderWidth: 1,
+    height: 20,
+    justifyContent: 'center',
+    width: 20,
+  },
+  checkBoxOn: {
+    backgroundColor: '#F5F5F7',
+    borderColor: '#F5F5F7',
+  },
+  checkMark: {
+    color: '#0A0A0C',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  selectedCount: {
+    color: '#5C5C66',
+    fontSize: 11,
+    fontWeight: '500',
+    marginBottom: 4,
+    textAlign: 'left',
+  },
+});

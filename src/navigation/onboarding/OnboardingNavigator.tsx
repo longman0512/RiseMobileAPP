@@ -29,12 +29,12 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Onboarding'>;
 export function OnboardingNavigator({ route }: Props) {
   return (
     <Stack.Navigator
-      initialRouteName={route.params?.initialRoute ?? 'Permissions'}
+      initialRouteName={route.params?.initialRoute ?? 'CoinRegistration'}
       screenOptions={{ headerShown: false }}
     >
-      <Stack.Screen name="Permissions" component={PermissionsScreen} />
       <Stack.Screen name="CoinRegistration" component={CoinRegistrationScreen} />
       <Stack.Screen name="FocusSetup" component={FocusSetupScreen} />
+      <Stack.Screen name="Permissions" component={PermissionsScreen} />
       <Stack.Screen name="MusicPicker" component={MusicPickerScreen} />
       <Stack.Screen name="PriorityContacts" component={PriorityContactsScreen} />
     </Stack.Navigator>

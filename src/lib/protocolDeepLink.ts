@@ -58,6 +58,10 @@ export function isProtocolDeepLink(url: string): boolean {
   return parseProtocolFromUrl(url) !== null;
 }
 
+/**
+ * Increment while a coin-registration UI owns the NFC tap (onboarding pair screen
+ * or Settings manage-coins). Protocol Universal Links are ignored until cleanup.
+ */
 export function suppressProtocolDeepLinks(): () => void {
   protocolDeepLinkSuppressionCount += 1;
 
