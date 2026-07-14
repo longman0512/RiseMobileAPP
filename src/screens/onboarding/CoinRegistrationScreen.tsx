@@ -53,8 +53,13 @@ export function CoinRegistrationScreen() {
 
   const [registeredTypes, setRegisteredTypes] = useState<Set<CoinType>>(() => getRegisteredTypes(coins));
   const [step, setStep] = useState<Step>(() => getFirstPendingType(getRegisteredTypes(coins)));
-  const [listening, setListening] = useState(false);
+  const [, setListening] = useState(false);
   const [registering, setRegistering] = useState(false);
+  // Bumped to re-arm the (one-shot on iOS) NFC scan session after a failed read
+  // or registration error, and when the user taps "Scan again". Without this the
+  // iOS scan sheet closes after one tap and never reopens for the same step.
+  const [rescanToken, setRescanToken] = useState(0);
+  const rescan = useCallback(() => setRescanToken((t) => t + 1), []);
 
   const stopNfcRef = useRef<(() => void) | null>(null);
   const handlingTagRef = useRef(false);
@@ -90,6 +95,9 @@ export function CoinRegistrationScreen() {
         const result = await registerCoin(coinId, coinType);
         if (!result.ok) {
           showErrorToast('Registration failed', result.message);
+          // Re-arm the scan so the user can immediately try again (on iOS the
+          // one-shot scan sheet has already closed at this point).
+          rescan();
           return;
         }
 
@@ -102,7 +110,7 @@ export function CoinRegistrationScreen() {
         handlingTagRef.current = false;
       }
     },
-    [registerCoin, registeredTypes],
+    [registerCoin, registeredTypes, rescan],
   );
 
   useEffect(() => {
@@ -149,7 +157,7 @@ export function CoinRegistrationScreen() {
       if (stop) void stop();
       setNfcBusy(false);
     };
-  }, [step, registeredTypes, handleTag]);
+  }, [step, registeredTypes, handleTag, rescanToken]);
 
   const goToFocusSetup = () => {
     navigation.navigate('FocusSetup');
@@ -221,6 +229,12 @@ export function CoinRegistrationScreen() {
           </Text>
           {registering ? <ActivityIndicator color="#F5F5F7" style={styles.scanSpinner} /> : null}
         </View>
+
+        {!allRegistered && !registering ? (
+          <Pressable style={styles.rescanButton} onPress={rescan}>
+            <Text style={styles.rescanText}>Scan again</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={onboardingStyles.footer}>
@@ -365,5 +379,19 @@ const styles = StyleSheet.create({
   },
   scanSpinner: {
     marginLeft: 4,
+  },
+  rescanButton: {
+    alignItems: 'center',
+    borderColor: '#2E2E36',
+    borderRadius: 12,
+    borderWidth: 1,
+    height: 44,
+    justifyContent: 'center',
+    marginTop: 16,
+  },
+  rescanText: {
+    color: '#F5F5F7',
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

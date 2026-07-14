@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppBlockPickerModal } from '../../components/AppBlockPickerModal';
 import type { OnboardingStackParamList } from '../../navigation/onboarding/OnboardingNavigator';
 import {
   hasFocusModeSelection,
@@ -24,7 +25,7 @@ type BlockingStep = {
   requiresPicker: boolean;
 };
 
-const IOS_BLOCKING_STEPS: BlockingStep[] = [
+const BLOCKING_STEPS: BlockingStep[] = [
   {
     protocol: 'lockin',
     title: 'RISE Lock In',
@@ -50,18 +51,12 @@ const IOS_BLOCKING_STEPS: BlockingStep[] = [
   },
 ];
 
-const ANDROID_BULLETS = [
-  'Open Digital Wellbeing or app timers',
-  'Set limits on social and video apps',
-  'Allow notes and browser during FLOW',
-];
-
 export function FocusSetupScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<OnboardingStackParamList>>();
   const insets = useSafeAreaInsets();
   const { setFocusSetupComplete } = useUserPreferences();
-  const isIos = Platform.OS === 'ios';
-  const [iosStep, setIosStep] = useState(0);
+  const isAndroid = Platform.OS === 'android';
+  const [step, setStep] = useState(0);
   const [authorized, setAuthorized] = useState(false);
   const [selections, setSelections] = useState<Record<CoinType, boolean>>({
     lockin: false,
@@ -69,31 +64,42 @@ export function FocusSetupScreen() {
     reset: true,
   });
   const [busy, setBusy] = useState(false);
+  const [pickerProtocol, setPickerProtocol] = useState<CoinType | null>(null);
 
-  const currentIos = IOS_BLOCKING_STEPS[iosStep];
-  const allIosReady = authorized && selections.lockin && selections.flow;
-  const canAdvanceCurrent = !currentIos.requiresPicker || selections[currentIos.protocol];
-  const isLastStep = iosStep === IOS_BLOCKING_STEPS.length - 1;
+  const current = BLOCKING_STEPS[step];
+  const allReady = authorized && selections.lockin && selections.flow;
+  const canAdvanceCurrent = !current.requiresPicker || selections[current.protocol];
+  const isLastStep = step === BLOCKING_STEPS.length - 1;
+
+  const refreshState = useCallback(async () => {
+    const [isAuthorized, lockin, flow] = await Promise.all([
+      isFocusModeAuthorized(),
+      hasFocusModeSelection('lockin'),
+      hasFocusModeSelection('flow'),
+    ]);
+    setAuthorized(isAuthorized);
+    setSelections({ lockin, flow, reset: true });
+  }, []);
 
   useEffect(() => {
-    if (!isIos) return;
-
     let mounted = true;
     void (async () => {
-      const [isAuthorized, lockin, flow] = await Promise.all([
-        isFocusModeAuthorized(),
-        hasFocusModeSelection('lockin'),
-        hasFocusModeSelection('flow'),
-      ]);
+      await refreshState();
       if (!mounted) return;
-      setAuthorized(isAuthorized);
-      setSelections({ lockin, flow, reset: true });
     })();
-
     return () => {
       mounted = false;
     };
-  }, [isIos]);
+  }, [refreshState]);
+
+  // Re-check authorization/selection when returning to the app (e.g. after
+  // enabling the Accessibility service in Android system settings).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refreshState();
+    });
+    return () => sub.remove();
+  }, [refreshState]);
 
   const onContinue = async () => {
     await setFocusSetupComplete(true);
@@ -113,7 +119,14 @@ export function FocusSetupScreen() {
         setAuthorized(isAuthorizedNow);
       }
       if (!isAuthorizedNow) {
+        // On Android this opens the Accessibility settings; the user grants
+        // access and the picker becomes available on their next tap.
         showFocusModeSetupUnavailableAlert('authorization');
+        return;
+      }
+
+      if (isAndroid) {
+        setPickerProtocol(protocol);
         return;
       }
 
@@ -128,20 +141,17 @@ export function FocusSetupScreen() {
     }
   };
 
-  const renderFooterPrimary = () => {
-    if (!isIos) {
-      return (
-        <Pressable style={onboardingStyles.continueButton} onPress={onContinue}>
-          <Text style={onboardingStyles.continueText}>Continue</Text>
-        </Pressable>
-      );
-    }
+  const onPickerClose = (protocol: CoinType, saved: boolean) => {
+    setPickerProtocol(null);
+    setSelections((prev) => ({ ...prev, [protocol]: saved }));
+  };
 
+  const renderFooterPrimary = () => {
     if (!isLastStep) {
       return (
         <Pressable
           style={[onboardingStyles.continueButton, !canAdvanceCurrent ? onboardingStyles.continueButtonDisabled : null]}
-          onPress={() => setIosStep((s) => s + 1)}
+          onPress={() => setStep((s) => s + 1)}
           disabled={!canAdvanceCurrent}
         >
           <Text
@@ -158,80 +168,61 @@ export function FocusSetupScreen() {
 
     return (
       <Pressable
-        style={[onboardingStyles.continueButton, !allIosReady ? onboardingStyles.continueButtonDisabled : null]}
+        style={[onboardingStyles.continueButton, !allReady ? onboardingStyles.continueButtonDisabled : null]}
         onPress={onContinue}
-        disabled={!allIosReady}
+        disabled={!allReady}
       >
-        <Text style={[onboardingStyles.continueText, !allIosReady ? onboardingStyles.continueTextDisabled : null]}>
+        <Text style={[onboardingStyles.continueText, !allReady ? onboardingStyles.continueTextDisabled : null]}>
           Continue
         </Text>
       </Pressable>
     );
   };
 
-  const heroTitle = isIos ? currentIos.title : 'Focus & apps';
-  const heroSubtitle = isIos
-    ? currentIos.description
-    : 'Set up app limits so FLOW stays filtered, not fully blocked.';
-
   return (
     <View style={onboardingStyles.root}>
       <View style={[onboardingStyles.content, { paddingTop: insets.top + 18 }]}>
         <View style={onboardingStyles.hero}>
           <Text style={onboardingStyles.eyebrow}>{setupEyebrow(2)}</Text>
-          {isIos ? (
-            <Text style={styles.modeLabel}>
-              Mode {iosStep + 1} of {IOS_BLOCKING_STEPS.length}
-            </Text>
-          ) : null}
-          <Text style={onboardingStyles.title}>{heroTitle}</Text>
-          <Text style={onboardingStyles.subtitle}>{heroSubtitle}</Text>
+          <Text style={styles.modeLabel}>
+            Mode {step + 1} of {BLOCKING_STEPS.length}
+          </Text>
+          <Text style={onboardingStyles.title}>{current.title}</Text>
+          <Text style={onboardingStyles.subtitle}>{current.description}</Text>
         </View>
 
-        {isIos ? (
-          <View style={styles.hintBox}>
-            {currentIos.requiresPicker ? (
-              <>
-                <Pressable
+        <View style={styles.hintBox}>
+          {current.requiresPicker ? (
+            <>
+              <Pressable
+                style={[styles.actionButton, selections[current.protocol] ? styles.actionButtonDone : null]}
+                onPress={() => onChooseApps(current.protocol)}
+                disabled={busy}
+              >
+                <Text
                   style={[
-                    styles.actionButton,
-                    selections[currentIos.protocol] ? styles.actionButtonDone : null,
+                    styles.actionButtonText,
+                    selections[current.protocol] ? styles.actionButtonTextDone : null,
                   ]}
-                  onPress={() => onChooseApps(currentIos.protocol)}
-                  disabled={busy}
                 >
-                  <Text
-                    style={[
-                      styles.actionButtonText,
-                      selections[currentIos.protocol] ? styles.actionButtonTextDone : null,
-                    ]}
-                  >
-                    {busy ? 'Opening...' : currentIos.pickerLabel}
-                  </Text>
-                </Pressable>
-                <Text style={styles.statusText}>
-                  {selections[currentIos.protocol] ? 'Configured' : 'Not configured yet'}
+                  {busy ? 'Opening...' : current.pickerLabel}
                 </Text>
-              </>
-            ) : (
-              <Text style={styles.hintCopy}>No app picker is needed for RESET.</Text>
-            )}
-          </View>
-        ) : (
-          <View style={[styles.hintBox, styles.hintBoxRow]}>
-            <View style={styles.hintIcon}>
-              <View style={styles.hintRingOuter} />
-              <View style={styles.hintRingInner} />
-            </View>
-            <View style={styles.hintBody}>
-              {ANDROID_BULLETS.map((line) => (
-                <Text key={line} style={styles.hintCopy}>
-                  - {line}
+              </Pressable>
+              <Text style={styles.statusText}>
+                {selections[current.protocol] ? 'Configured' : 'Not configured yet'}
+              </Text>
+              {!authorized ? (
+                <Text style={styles.hintCopy}>
+                  {isAndroid
+                    ? 'You will be asked to enable Rise under Accessibility to allow app blocking.'
+                    : 'You will be asked to allow Screen Time access to block apps.'}
                 </Text>
-              ))}
-            </View>
-          </View>
-        )}
+              ) : null}
+            </>
+          ) : (
+            <Text style={styles.hintCopy}>No app picker is needed for RESET.</Text>
+          )}
+        </View>
       </View>
 
       <View style={onboardingStyles.footer}>
@@ -240,6 +231,14 @@ export function FocusSetupScreen() {
           <Text style={onboardingStyles.skipText}>Skip for now</Text>
         </Pressable>
       </View>
+
+      {isAndroid && pickerProtocol ? (
+        <AppBlockPickerModal
+          visible
+          protocol={pickerProtocol}
+          onClose={(saved) => onPickerClose(pickerProtocol, saved)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -264,41 +263,6 @@ const styles = StyleSheet.create({
     minHeight: 72,
     paddingHorizontal: 16,
     paddingVertical: 18,
-  },
-  hintBoxRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 14,
-  },
-  hintIcon: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    borderColor: '#9A9AA2',
-    borderRadius: 19,
-    borderWidth: 1.5,
-    height: 38,
-    justifyContent: 'center',
-    width: 38,
-  },
-  hintRingOuter: {
-    borderColor: 'rgba(92,92,102,0.25)',
-    borderRadius: 33,
-    borderWidth: 1,
-    height: 66,
-    position: 'absolute',
-    width: 66,
-  },
-  hintRingInner: {
-    borderColor: 'rgba(92,92,102,0.5)',
-    borderRadius: 26,
-    borderWidth: 1,
-    height: 52,
-    position: 'absolute',
-    width: 52,
-  },
-  hintBody: {
-    flex: 1,
-    gap: 6,
   },
   hintCopy: {
     color: '#9A9AA2',

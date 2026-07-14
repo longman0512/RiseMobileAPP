@@ -1,7 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
+  Linking,
   Pressable,
   StyleSheet,
   Text,
@@ -12,8 +14,7 @@ import Contacts from 'react-native-contacts';
 import type { Contact } from 'react-native-contacts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { OnboardingStackParamList } from '../../navigation/onboarding/OnboardingNavigator';
-import { requestContactsPermission } from '../../lib/permissions';
+import { isContactsPermissionBlocked, requestContactsPermission } from '../../lib/permissions';
 import { useCoins } from '../../providers/CoinsProvider';
 import { useOnboardingState } from '../../providers/OnboardingStateProvider';
 import { useUserPreferences } from '../../providers/UserPreferencesProvider';
@@ -38,6 +39,9 @@ export function PriorityContactsScreen() {
 
   const [loading, setLoading] = useState(true);
   const [permissionDenied, setPermissionDenied] = useState(false);
+  // True when contacts access is permanently blocked (iOS won't re-prompt) —
+  // the only recovery is the system Settings app.
+  const [permissionBlocked, setPermissionBlocked] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(priorityContactIds));
   const [query, setQuery] = useState('');
@@ -45,10 +49,12 @@ export function PriorityContactsScreen() {
   const loadContacts = useCallback(async () => {
     setLoading(true);
     setPermissionDenied(false);
+    setPermissionBlocked(false);
     try {
       const granted = await requestContactsPermission();
       if (!granted) {
         setPermissionDenied(true);
+        setPermissionBlocked(await isContactsPermissionBlocked());
         setLoading(false);
         return;
       }
@@ -65,6 +71,19 @@ export function PriorityContactsScreen() {
 
   useEffect(() => {
     void loadContacts();
+  }, [loadContacts]);
+
+  // When access is blocked, the user must grant it in system Settings. Retry
+  // automatically when they return to the app so the list loads without a manual tap.
+  const permissionBlockedRef = useRef(permissionBlocked);
+  permissionBlockedRef.current = permissionBlocked;
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && permissionBlockedRef.current) {
+        void loadContacts();
+      }
+    });
+    return () => sub.remove();
   }, [loadContacts]);
 
   const filtered = useMemo(() => {
@@ -123,10 +142,19 @@ export function PriorityContactsScreen() {
         ) : permissionDenied ? (
           <View style={styles.deniedWrap}>
             <Text style={styles.deniedText}>
-              Contacts access was not granted. You can add priority contacts later in Settings.
+              {permissionBlocked
+                ? 'Contacts access is turned off. Enable it in Settings to choose priority contacts, or add them later.'
+                : 'Contacts access was not granted. You can add priority contacts later in Settings.'}
             </Text>
-            <Pressable style={styles.retryButton} onPress={() => void loadContacts()}>
-              <Text style={styles.retryText}>Try again</Text>
+            <Pressable
+              style={styles.retryButton}
+              onPress={() =>
+                permissionBlocked ? void Linking.openSettings() : void loadContacts()
+              }
+            >
+              <Text style={styles.retryText}>
+                {permissionBlocked ? 'Open Settings' : 'Try again'}
+              </Text>
             </Pressable>
           </View>
         ) : (

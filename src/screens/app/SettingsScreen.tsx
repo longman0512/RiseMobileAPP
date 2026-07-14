@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Contacts from 'react-native-contacts';
 import type { Contact } from 'react-native-contacts';
 
+import { AppBlockPickerModal } from '../../components/AppBlockPickerModal';
 import { ManageCoinsPanel } from '../../components/ManageCoinsPanel';
 import {
   hasFocusModeSelection,
@@ -80,6 +83,8 @@ export function SettingsScreen() {
     flow: false,
   });
   const [blockingBusy, setBlockingBusy] = useState<CoinType | null>(null);
+  const [blockingPickerProtocol, setBlockingPickerProtocol] = useState<'lockin' | 'flow' | null>(null);
+  const isAndroid = Platform.OS === 'android';
 
   const email = session?.user?.email ?? '';
   const initialUsername = (session?.user?.user_metadata?.username as string | undefined) ?? '';
@@ -107,6 +112,14 @@ export function SettingsScreen() {
     refreshBlockingStatus().catch(() => {});
   }, [refreshBlockingStatus]);
 
+  // Re-check after returning from Android's Accessibility settings.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshBlockingStatus().catch(() => {});
+    });
+    return () => sub.remove();
+  }, [refreshBlockingStatus]);
+
   const pairedCount = useMemo(
     () => coins.filter((c) => c.active).length,
     [coins],
@@ -122,6 +135,11 @@ export function SettingsScreen() {
           setScreenTimeAuthorized(isAuthorized);
         }
         if (isAuthorized) {
+          if (isAndroid) {
+            // Android has no native picker — open the in-app app list.
+            setBlockingPickerProtocol(protocol);
+            return;
+          }
           const saved = await presentFocusModePicker(protocol);
           if (!saved) showFocusModeSetupUnavailableAlert('picker');
         } else {
@@ -132,7 +150,7 @@ export function SettingsScreen() {
         setBlockingBusy(null);
       }
     },
-    [refreshBlockingStatus, screenTimeAuthorized],
+    [isAndroid, refreshBlockingStatus, screenTimeAuthorized],
   );
 
   const onProtocolRow = useCallback(
@@ -312,6 +330,17 @@ export function SettingsScreen() {
       </ScrollView>
 
       <ManageCoinsPanel visible={panel === 'coins'} onClose={() => setPanel('none')} />
+
+      {isAndroid && blockingPickerProtocol ? (
+        <AppBlockPickerModal
+          visible
+          protocol={blockingPickerProtocol}
+          onClose={() => {
+            setBlockingPickerProtocol(null);
+            refreshBlockingStatus().catch(() => {});
+          }}
+        />
+      ) : null}
 
       <Modal visible={panel === 'flow'} animationType="slide" onRequestClose={() => setPanel('none')}>
         <View style={[styles.modalRoot, { paddingTop: insets.top + 12 }]}>

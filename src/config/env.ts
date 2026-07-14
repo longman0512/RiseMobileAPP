@@ -22,9 +22,9 @@ export const env = {
     (Config?.ENABLE_DEV_COIN_SIMULATOR as string | undefined)?.trim() === 'true',
 };
 
-/** Dev panel for simulating NFC coin taps (__DEV__ or ENABLE_DEV_COIN_SIMULATOR=true). */
+/** Dev panel for simulating NFC coin taps (ENABLE_DEV_COIN_SIMULATOR=true only). */
 export function isDevCoinSimulatorEnabled(): boolean {
-  return typeof __DEV__ !== 'undefined' && __DEV__ ? true : env.ENABLE_DEV_COIN_SIMULATOR;
+  return env.ENABLE_DEV_COIN_SIMULATOR;
 }
 
 export function isSupabaseConfigured(): boolean {

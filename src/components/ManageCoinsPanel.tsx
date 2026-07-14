@@ -11,7 +11,7 @@ import {
   readCoinRegistrationTagOnce,
   setNfcBusy,
 } from '../lib/nfc';
-import { parseProtocolUniversalLinkFromUrl, suppressProtocolDeepLinks } from '../lib/protocolDeepLink';
+import { suppressProtocolDeepLinks } from '../lib/protocolDeepLink';
 import { showErrorToast, showSuccessToast } from '../lib/toast';
 import { useCoins } from '../providers/CoinsProvider';
 import { COIN_LABELS, COIN_TYPES, type CoinType } from '../types/coins';
@@ -93,25 +93,9 @@ export function ManageCoinsPanel({ visible, onClose }: Props) {
             if (cancelled) return;
 
             setRegistering(true);
-            if (!tag.ndefUrl) {
-              showErrorToast('Invalid coin URL', 'This coin does not have a readable NDEF URL.');
-              continue;
-            }
-
-            const urlType = parseProtocolUniversalLinkFromUrl(tag.ndefUrl);
-            if (!urlType) {
-              showErrorToast('Invalid coin URL', 'This URL is not a valid RISE protocol link.');
-              continue;
-            }
-
-            if (urlType !== activeType) {
-              showErrorToast(
-                'Wrong coin type',
-                `This tag is for ${COIN_LABELS[urlType]}, not ${COIN_LABELS[activeType]}.`,
-              );
-              continue;
-            }
-
+            // Register by UID as the currently-selected type. The coin's NDEF URL
+            // is intentionally ignored here — it is reserved for the tap-to-open
+            // Universal Link, and the type is chosen by the user in the UI.
             const result = await registerCoinStrict(tag.coinId, activeType);
             if (!result.ok) {
               showErrorToast('Registration failed', result.message);

@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Rise</string>
+    <string name="rise_focus_accessibility_description">Lets Rise pause the apps you choose while a focus session (Lock In / Flow) is running. Rise only checks which app is in the foreground to block it; it does not read screen content.</string>
 </resources>

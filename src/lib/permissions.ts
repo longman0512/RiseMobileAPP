@@ -86,6 +86,21 @@ export async function requestContactsPermission(): Promise<boolean> {
   }
 }
 
+/**
+ * Reads the current contacts permission without prompting. Used to tell apart a
+ * still-promptable state from a permanently blocked one (iOS only prompts once;
+ * after a denial `requestPermission()` returns `denied` silently), so the UI can
+ * route the user to system Settings instead of a dead "Try again".
+ */
+export async function isContactsPermissionBlocked(): Promise<boolean> {
+  try {
+    const permission = await Contacts.checkPermission();
+    return permission === 'denied';
+  } catch {
+    return false;
+  }
+}
+
 export async function ensureAndroidPostNotificationsPermission(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
   if (typeof Platform.Version === 'number' && Platform.Version < 33) return true;

@@ -4,10 +4,14 @@ import { openFocusSettings } from './focusSettings';
 import {
   activateNativeFocusMode,
   deactivateNativeFocusMode,
+  getInstalledApps,
+  getNativeFocusSelection,
   hasNativeFocusSelection,
   isNativeFocusAuthorized,
   presentNativeFocusPicker,
   requestNativeFocusAuthorization,
+  setNativeFocusSelection,
+  type InstalledApp,
 } from '../native/RiseFocusMode';
 import type { CoinType } from '../types/coins';
 import { COIN_LABELS } from '../types/coins';
@@ -51,6 +55,24 @@ export async function hasFocusModeSelection(protocol: CoinType): Promise<boolean
   return hasNativeFocusSelection(protocol);
 }
 
+/** Android app-blocking picker helpers (no native system picker on Android). */
+export async function getBlockableApps(): Promise<InstalledApp[]> {
+  return getInstalledApps();
+}
+
+export async function getFocusModeSelection(protocol: CoinType): Promise<string[]> {
+  return getNativeFocusSelection(protocol);
+}
+
+export async function setFocusModeSelection(
+  protocol: CoinType,
+  packages: string[],
+): Promise<boolean> {
+  return setNativeFocusSelection(protocol, packages);
+}
+
+export type { InstalledApp };
+
 function getIosMajorVersion(): number | null {
   const version = Platform.Version;
   if (typeof version === 'number') return version;
@@ -59,8 +81,18 @@ function getIosMajorVersion(): number | null {
 }
 
 export function showFocusModeSetupUnavailableAlert(reason: 'authorization' | 'picker'): void {
+  if (Platform.OS === 'android') {
+    Alert.alert(
+      'App blocking unavailable',
+      reason === 'authorization'
+        ? 'Accessibility access was not granted. Enable "Rise" under Settings → Accessibility to block apps during focus sessions.'
+        : 'Could not open the app picker. Please try again.',
+    );
+    return;
+  }
+
   if (Platform.OS !== 'ios') {
-    Alert.alert('App blocking unavailable', 'App blocking with Screen Time is only available on iPhone.');
+    Alert.alert('App blocking unavailable', 'App blocking is not available on this platform.');
     return;
   }
 

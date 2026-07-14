@@ -1,10 +1,8 @@
 import { Platform } from 'react-native';
 import NfcManager, {
-  Ndef,
   NfcAdapter,
   NfcEvents,
   NfcTech,
-  type NdefRecord,
   type TagEvent,
 } from 'react-native-nfc-manager';
 
@@ -79,32 +77,6 @@ export function normalizeCoinId(raw: string | number[] | undefined | null): stri
   const trimmed = String(raw).trim().replace(/[^0-9a-fA-F]/g, '');
   if (!trimmed) return null;
   return trimmed.toUpperCase();
-}
-
-function decodeNdefUrl(records: NdefRecord[] | undefined | null): string | null {
-  if (!records?.length) return null;
-
-  for (const record of records) {
-    const payload = Uint8Array.from(record.payload ?? []);
-    try {
-      if (Ndef.isType(record, Ndef.TNF_WELL_KNOWN, Ndef.RTD_URI)) {
-        const url = Ndef.uri.decodePayload(payload).trim();
-        if (url) return url;
-      }
-      if (Ndef.isType(record, Ndef.TNF_WELL_KNOWN, Ndef.RTD_TEXT)) {
-        const text = Ndef.text.decodePayload(payload).trim();
-        if (/^https?:\/\//i.test(text)) return text;
-      }
-      if (record.tnf === Ndef.TNF_ABSOLUTE_URI) {
-        const url = Ndef.util.bytesToString(payload).trim();
-        if (url) return url;
-      }
-    } catch {
-      // Ignore malformed records and keep looking for a usable URL.
-    }
-  }
-
-  return null;
 }
 
 export async function isNfcSupported(): Promise<boolean> {
@@ -277,7 +249,6 @@ export async function readCoinIdOnce(): Promise<string> {
 
 export type CoinRegistrationTag = {
   coinId: string;
-  ndefUrl: string | null;
 };
 
 export async function cancelNfcRequest(): Promise<void> {
@@ -288,7 +259,13 @@ export async function cancelNfcRequest(): Promise<void> {
   }
 }
 
-/** One-shot foreground scan for Settings registration: reads UID and NDEF URL. */
+/**
+ * One-shot foreground scan for Settings registration. Reads the chip UID only —
+ * registration keys coins by UID and the coin type is chosen by the user in the
+ * UI, not by the coin's NDEF URL (that URL is reserved for the tap-to-open-app
+ * Universal Link and must NOT be used here, or scanning would deep-link to
+ * PreStart instead of registering).
+ */
 export async function readCoinRegistrationTagOnce(): Promise<CoinRegistrationTag> {
   const supported = await initNfc();
   if (!supported) {
@@ -306,10 +283,7 @@ export async function readCoinRegistrationTagOnce(): Promise<CoinRegistrationTag
       throw new Error('Could not read coin ID from tag.');
     }
 
-    return {
-      coinId,
-      ndefUrl: decodeNdefUrl(tag?.ndefMessage),
-    };
+    return { coinId };
   } finally {
     await cancelNfcRequest();
   }

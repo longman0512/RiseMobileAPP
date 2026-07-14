@@ -4,7 +4,6 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProtocolAppFeed } from '../../components/protocol/ProtocolAppFeed';
-import { DevCoinSimulator } from '../../components/DevCoinSimulator';
 import { ProtocolCoinBadge } from '../../components/protocol/ProtocolCoinBadge';
 import { ProtocolTimerRing } from '../../components/protocol/ProtocolTimerRing';
 import { hasFocusModeSelection } from '../../lib/focusMode';
@@ -217,7 +216,6 @@ export function ProtocolActiveScreen({ route }: Props) {
           ) : (
             <ResetFootnote />
           )}
-          <DevCoinSimulator compact />
         </View>
       </ScrollView>
     </View>
