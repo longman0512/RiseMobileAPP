@@ -32,28 +32,56 @@ export function DevCoinSimulator({ compact = false }: Props) {
     simulateProtocolTap(protocol, session.handleProtocolTrigger, { hasRegisteredCoin });
   };
 
-  const pausedLabel =
-    session.pausedFlowRemainingSeconds != null
-      ? `${Math.ceil(session.pausedFlowRemainingSeconds / 60)} min remaining`
-      : 'none';
+  const pausedLabel = session.pauseRemainingSeconds
+    ? `${Math.ceil(session.pauseRemainingSeconds / 60)} min left`
+    : 'none';
 
-  const pendingResumeLabel =
-    session.pendingFlowResumeSeconds != null
-      ? `${Math.ceil(session.pendingFlowResumeSeconds / 60)} min (tap FLOW)`
-      : 'none';
+  const shiftLabel = session.shiftOpen
+    ? `${session.shiftBlocks.length} block(s), ${session.shiftFocusMinutes} min`
+    : 'closed';
+
+  if (compact) {
+    return (
+      <View className="flex-row items-center gap-1.5 rounded-xl border border-dashed border-amber-500/50 bg-[#1A1508] px-2 py-1.5">
+        <Text className="text-amber-400 text-[9px] font-bold tracking-widest">DEV</Text>
+        {COIN_TYPES.map((type) => (
+          <Pressable
+            key={type}
+            onPress={() => onTap(type)}
+            className="flex-1 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 items-center"
+            accessibilityLabel={`Simulate ${COIN_LABELS[type]} coin tap`}
+          >
+            <Text className="text-amber-100 text-[9.5px] font-bold">{COIN_LABELS[type]}</Text>
+          </Pressable>
+        ))}
+        <Pressable
+          onPress={() => setBypassRegistration((v) => !v)}
+          className={[
+            'w-6 h-6 rounded-md border items-center justify-center',
+            bypassRegistration ? 'bg-amber-500 border-amber-500' : 'border-zinc-600',
+          ].join(' ')}
+          accessibilityLabel="Treat coins as registered"
+        >
+          <Text
+            className={[
+              'text-[11px] font-bold',
+              bypassRegistration ? 'text-black' : 'text-zinc-500',
+            ].join(' ')}
+          >
+            ✓
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
-    <View
-      className={[
-        'rounded-xl border border-dashed border-amber-500/50 bg-amber-950/20',
-        compact ? 'px-3 py-3' : 'px-4 py-4 mt-4',
-      ].join(' ')}
-    >
+    <View className="rounded-xl border border-dashed border-amber-500/50 bg-[#1A1508] px-4 py-4 mt-4">
       <Text className="text-amber-400 text-xs font-semibold uppercase tracking-wide">
         Dev — simulate NFC tap
       </Text>
 
-      <View className={['flex-row gap-2', compact ? 'mt-2' : 'mt-3'].join(' ')}>
+      <View className="flex-row gap-2 mt-3">
         {COIN_TYPES.map((type) => (
           <Pressable
             key={type}
@@ -82,8 +110,7 @@ export function DevCoinSimulator({ compact = false }: Props) {
         <Text className="text-zinc-400 text-xs flex-1">Treat coins as registered</Text>
       </Pressable>
 
-      {!compact ? (
-        <View className="mt-3 pt-3 border-t border-amber-500/20">
+      <View className="mt-3 pt-3 border-t border-amber-500/20">
           <Text className="text-zinc-500 text-[10px] font-mono leading-4">
             auth: {authPhase}
             {'\n'}
@@ -92,14 +119,13 @@ export function DevCoinSimulator({ compact = false }: Props) {
             {'\n'}
             coins: {registeredTypes.length ? registeredTypes.join(', ') : 'none'}
             {'\n'}
-            paused FLOW: {pausedLabel}
+            pause: {pausedLabel}
             {'\n'}
-            pending resume: {pendingResumeLabel}
+            shift: {shiftLabel}
             {'\n'}
             deep link: {buildProtocolDeepLink('flow')}
-          </Text>
-        </View>
-      ) : null}
+        </Text>
+      </View>
     </View>
   );
 }

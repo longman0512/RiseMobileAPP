@@ -17,6 +17,7 @@ import { CoinTapProvider } from './src/providers/CoinTapProvider';
 import { OnboardingStateProvider } from './src/providers/OnboardingStateProvider';
 import { ProtocolDeepLinkHandler } from './src/providers/ProtocolDeepLinkHandler';
 import { SessionProvider } from './src/providers/SessionProvider';
+import { SquadProvider } from './src/providers/SquadProvider';
 import { UserPreferencesProvider } from './src/providers/UserPreferencesProvider';
 
 function EnvSetupWithSplash() {
@@ -55,20 +56,22 @@ export default function App() {
         <AuthProvider>
           <AuthDeepLinkHandler />
           <CoinsProvider>
-            <UserPreferencesProvider>
-              <SessionProvider>
-                <BackgroundSessionProvider>
-                  <ActivationProvider>
-                    <OnboardingStateProvider>
-                      <CoinTapProvider>
-                        <ProtocolDeepLinkHandler />
-                        <AppShell />
-                      </CoinTapProvider>
-                    </OnboardingStateProvider>
-                  </ActivationProvider>
-                </BackgroundSessionProvider>
-              </SessionProvider>
-            </UserPreferencesProvider>
+            <SquadProvider>
+              <UserPreferencesProvider>
+                <SessionProvider>
+                  <BackgroundSessionProvider>
+                    <ActivationProvider>
+                      <OnboardingStateProvider>
+                        <CoinTapProvider>
+                          <ProtocolDeepLinkHandler />
+                          <AppShell />
+                        </CoinTapProvider>
+                      </OnboardingStateProvider>
+                    </ActivationProvider>
+                  </BackgroundSessionProvider>
+                </SessionProvider>
+              </UserPreferencesProvider>
+            </SquadProvider>
           </CoinsProvider>
         </AuthProvider>
         <AppToast />

@@ -4,7 +4,16 @@ import type { RootStackParamList } from '../navigation/RootNavigator';
 
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
-type ProtocolScreen = 'PreStart' | 'Active' | 'Summary' | 'Journal' | 'RegisterCoin';
+type ProtocolScreen =
+  | 'PreStart'
+  | 'Active'
+  | 'ResetChoice'
+  | 'Tiredness'
+  | 'Closeout'
+  | 'Breathe'
+  | 'EndShift'
+  | 'Finale'
+  | 'RegisterCoin';
 
 type PendingProtocolNav = {
   screen: ProtocolScreen;
@@ -57,6 +66,12 @@ export function resetToApp(): void {
   pendingProtocolNav = null;
 
   if (!navigationRef.isReady()) return;
+
+  // 'App' only exists while signed in and past onboarding. Ending a session as
+  // part of signing out would otherwise dispatch a reset no navigator handles.
+  const rootState = navigationRef.getRootState();
+  if (!rootState?.routeNames?.includes('App')) return;
+
   navigationRef.dispatch(
     CommonActions.reset({
       index: 0,

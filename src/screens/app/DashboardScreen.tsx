@@ -18,6 +18,8 @@ import { useAuth } from '../../providers/AuthProvider';
 import { useSession } from '../../providers/SessionProvider';
 import { focusMinutesByLocalDate, localTodayKey } from '../../lib/sessionAnalytics';
 import { fetchSessionHistory } from '../../lib/sessionApi';
+import { EMPTY_MY_XP, fetchMyXp, type MyXp } from '../../lib/shiftApi';
+import { formatXp } from '../../lib/xp';
 import { supabase } from '../../lib/supabase';
 import { COIN_LABELS, COIN_TYPES, type CoinType } from '../../types/coins';
 
@@ -49,6 +51,7 @@ export function DashboardScreen() {
   const { handleProtocolTrigger, phase } = useSession();
   const { scanCoin, scanning } = useCoinTap();
   const [todayFocusMinutes, setTodayFocusMinutes] = useState(0);
+  const [xp, setXp] = useState<MyXp>(EMPTY_MY_XP);
 
   const dateEyebrow = useMemo(() => formatDateEyebrow(new Date()), []);
   const todayLabel = formatFocusDuration(todayFocusMinutes);
@@ -61,9 +64,11 @@ export function DashboardScreen() {
       return;
     }
 
-    const { sessions } = await fetchSessionHistory(userId);
+    const [{ sessions }, myXp] = await Promise.all([fetchSessionHistory(userId), fetchMyXp()]);
     const byDate = focusMinutesByLocalDate(sessions);
     setTodayFocusMinutes(byDate.get(localTodayKey()) ?? 0);
+    // Committed XP only. A shift in progress stays silent until it is ended.
+    setXp(myXp);
   }, [session?.user?.id]);
 
   useFocusEffect(
@@ -85,11 +90,6 @@ export function DashboardScreen() {
       void scanCoin();
       return;
     }
-  };
-
-  const onManualStart = (protocol: CoinType) => {
-    if (!idle) return;
-    handleProtocolTrigger(protocol, { hasRegisteredCoin: true });
   };
 
   return (
@@ -129,30 +129,39 @@ export function DashboardScreen() {
           )}
         </View>
         <Text style={styles.tapTitle}>Tap a coin to begin</Text>
-        <Text style={styles.tapSub}>No coin? Start manually below.</Text>
+        <Text style={styles.tapSub}>
+          {Platform.OS === 'ios'
+            ? 'Tap here, then hold your coin to the top of your phone.'
+            : 'Hold your coin to the back of your phone.'}
+        </Text>
       </Pressable>
 
       <View style={styles.coinDock}>
         {COIN_TYPES.map((type) => (
-          <Pressable
-            key={type}
-            style={styles.dockItem}
-            onPress={() => onManualStart(type)}
-            disabled={!idle}
-            accessibilityLabel={`Start ${COIN_LABELS[type]} manually`}
-          >
+          <View key={type} style={styles.dockItem}>
             <LinearGradient colors={COIN_META[type].colors} style={styles.dockCoin}>
               <View style={styles.dockCoinInner} />
             </LinearGradient>
             <Text style={styles.dockName}>{COIN_LABELS[type]}</Text>
-          </Pressable>
+          </View>
         ))}
       </View>
+
 
       <View style={styles.todayLine}>
         <Text style={styles.todayKey}>Today</Text>
         <Text style={styles.todayValue}>
           {todayLabel} <Text style={styles.todayMuted}>focused</Text>
+        </Text>
+      </View>
+
+      <View style={styles.xpLine}>
+        <Text style={styles.todayKey}>Total XP</Text>
+        <Text style={styles.xpValue}>
+          {formatXp(xp.totalXp)}{' '}
+          <Text style={styles.todayMuted}>
+            {xp.totalShifts} shift{xp.totalShifts === 1 ? '' : 's'}
+          </Text>
         </Text>
       </View>
     </View>
@@ -327,6 +336,17 @@ const styles = StyleSheet.create({
     color: '#F5F5F7',
     fontSize: 14,
     fontWeight: '600',
+  },
+  xpLine: {
+    alignItems: 'baseline',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 10,
+  },
+  xpValue: {
+    color: '#E8C56A',
+    fontSize: 14,
+    fontWeight: '700',
   },
   todayMuted: {
     color: '#5C5C66',

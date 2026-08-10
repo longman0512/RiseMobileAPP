@@ -109,6 +109,8 @@ export type UserStats = {
   total_lockin_mins: number;
   total_flow_mins: number;
   total_reset_mins: number;
+  /** Lifetime XP, committed only when a shift is formally ended. */
+  total_xp: number;
 };
 
 type DbSessionRow = {
@@ -127,6 +129,7 @@ const EMPTY_STATS: UserStats = {
   total_lockin_mins: 0,
   total_flow_mins: 0,
   total_reset_mins: 0,
+  total_xp: 0,
 };
 
 function mapSessionRow(row: DbSessionRow): SessionRecord {
@@ -367,6 +370,7 @@ export async function fetchUserStats(userId: string): Promise<{
         total_lockin_mins: row.total_lockin_mins ?? 0,
         total_flow_mins: row.total_flow_mins ?? 0,
         total_reset_mins: row.total_reset_mins ?? 0,
+        total_xp: row.total_xp ?? 0,
       },
     };
   }
@@ -398,6 +402,7 @@ export async function fetchUserStats(userId: string): Promise<{
       total_lockin_mins: stats.total_lockin_mins ?? 0,
       total_flow_mins: stats.total_flow_mins ?? 0,
       total_reset_mins: stats.total_reset_mins ?? 0,
+      total_xp: stats.total_xp ?? 0,
     },
     error: error?.message,
   };

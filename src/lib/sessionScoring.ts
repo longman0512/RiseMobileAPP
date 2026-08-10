@@ -1,5 +1,4 @@
-import type { CoinType } from '../types/coins';
-
+/** Ranks are earned with XP — see src/lib/xp.ts for how XP is awarded. */
 export type RankName = 'Initiate' | 'Operator' | 'Architect' | 'Master';
 
 export type RankInfo = {
@@ -17,28 +16,6 @@ export const RANK_THRESHOLDS: { name: RankName; minPoints: number }[] = [
   { name: 'Architect', minPoints: 1500 },
   { name: 'Master', minPoints: 3000 },
 ];
-
-/** Lock In earns more per minute than Flow; Reset does not score. */
-export const POINTS_PER_MINUTE: Record<CoinType, number> = {
-  lockin: 2.5,
-  flow: 1.5,
-  reset: 0,
-};
-
-export const EXIT_PENALTY_POINTS = 10;
-
-export function sessionPointsEarned(
-  protocol: CoinType,
-  durationMinutes: number,
-  exits: number,
-): number {
-  const base = durationMinutes * POINTS_PER_MINUTE[protocol];
-  return Math.max(0, Math.round(base - exits * EXIT_PENALTY_POINTS));
-}
-
-export function totalPointsFromMinutes(lockinMins: number, flowMins: number): number {
-  return Math.round(lockinMins * POINTS_PER_MINUTE.lockin + flowMins * POINTS_PER_MINUTE.flow);
-}
 
 export function rankFromPoints(totalPoints: number): RankInfo {
   let current = RANK_THRESHOLDS[0];

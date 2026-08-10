@@ -30,7 +30,7 @@ export function ProtocolPreStartScreen({ route }: Props) {
   }, [config.defaultMinutes, config.maxMinutes, config.minMinutes, protocol]);
 
   const onBegin = () => {
-    session.beginSession(protocol === 'flow' ? undefined : minutes);
+    session.beginBlock(minutes);
   };
 
   return (

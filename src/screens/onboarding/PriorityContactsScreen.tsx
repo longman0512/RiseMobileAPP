@@ -119,7 +119,7 @@ export function PriorityContactsScreen() {
     <View style={onboardingStyles.root}>
       <View style={[styles.content, { paddingTop: insets.top + 18 }]}>
         <View style={onboardingStyles.hero}>
-          <Text style={onboardingStyles.eyebrow}>{setupEyebrow(4)}</Text>
+          <Text style={onboardingStyles.eyebrow}>{setupEyebrow(3)}</Text>
           <Text style={onboardingStyles.title}>
             Priority{'\n'}
             <Text style={onboardingStyles.titleLight}>contacts.</Text>

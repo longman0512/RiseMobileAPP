@@ -27,14 +27,15 @@ import {
   showFocusModeSetupUnavailableAlert,
 } from '../../lib/focusMode';
 import { lockInDefaultLabel, resetDefaultLabel } from '../../lib/journeyFormat';
-import { openFlowPlaylist } from '../../lib/flowMusic';
 import { requestContactsPermission } from '../../lib/permissions';
 import { supabase } from '../../lib/supabase';
 import { PROTOCOL_CONFIG } from '../../lib/protocolConfig';
 import { PROTOCOL_THEME } from '../../lib/protocolTheme';
 import { useAuth } from '../../providers/AuthProvider';
 import { useCoins } from '../../providers/CoinsProvider';
-import { useUserPreferences, type MusicService } from '../../providers/UserPreferencesProvider';
+import { useSquadCode } from '../../providers/SquadProvider';
+import { formatFriendCode } from '../../lib/squadFormat';
+import { useUserPreferences } from '../../providers/UserPreferencesProvider';
 import { COIN_LABELS, COIN_TYPES, type CoinType } from '../../types/coins';
 
 type Panel = 'none' | 'coins' | 'account' | 'flow';
@@ -89,6 +90,7 @@ export function SettingsScreen() {
   const email = session?.user?.email ?? '';
   const initialUsername = (session?.user?.user_metadata?.username as string | undefined) ?? '';
   const [username, setUsername] = useState(initialUsername);
+  const { myCode } = useSquadCode();
   const [savingUsername, setSavingUsername] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -345,30 +347,10 @@ export function SettingsScreen() {
       <Modal visible={panel === 'flow'} animationType="slide" onRequestClose={() => setPanel('none')}>
         <View style={[styles.modalRoot, { paddingTop: insets.top + 12 }]}>
           <Text style={[styles.modalTitle, { color: PROTOCOL_THEME.flow.accent }]}>Flow setup</Text>
-          <Text style={styles.modalSub}>Whitelist, music, and priority contacts — configure once here.</Text>
+          <Text style={styles.modalSub}>Whitelist and priority contacts — configure once here.</Text>
           <Pressable style={styles.modalSecondary} onPress={() => void onChooseBlockingApps('flow')}>
             <Text style={styles.modalSecondaryText}>Edit app whitelist</Text>
           </Pressable>
-          <Text style={styles.fieldLabel}>Music service</Text>
-          <View style={styles.musicRow}>
-            {(['spotify', 'apple', 'none'] as MusicService[]).map((id) => (
-              <Pressable
-                key={id}
-                style={[styles.musicChip, prefs.musicService === id && styles.musicChipOn]}
-                onPress={() => void prefs.setMusicService(id)}
-              >
-                <Text style={styles.musicChipText}>{id}</Text>
-              </Pressable>
-            ))}
-          </View>
-          {prefs.musicService !== 'none' ? (
-            <Pressable
-              style={styles.modalSecondary}
-              onPress={() => void openFlowPlaylist(prefs.musicService)}
-            >
-              <Text style={styles.modalSecondaryText}>Preview FLOW playlist</Text>
-            </Pressable>
-          ) : null}
           <Pressable
             style={styles.modalSecondary}
             onPress={async () => {
@@ -407,6 +389,11 @@ export function SettingsScreen() {
           <Pressable style={styles.modalPrimary} onPress={() => void onSaveUsername()} disabled={savingUsername}>
             <Text style={styles.modalPrimaryText}>{savingUsername ? 'Saving…' : 'Save username'}</Text>
           </Pressable>
+          <Text style={[styles.fieldLabel, { marginTop: 20 }]}>Squad code</Text>
+          <Text style={styles.codeValue}>{formatFriendCode(myCode)}</Text>
+          <Text style={styles.codeHint}>
+            Share this so friends can add you. It is assigned automatically and cannot be changed.
+          </Text>
           <Text style={[styles.fieldLabel, { marginTop: 20 }]}>Change password</Text>
           <TextInput
             style={styles.input}
@@ -543,6 +530,20 @@ const styles = StyleSheet.create({
   rowTxt: { flex: 1 },
   rowName: { color: '#F5F5F7', fontSize: 13.5, fontWeight: '500' },
   rowSub: { color: '#5C5C66', fontSize: 11, fontWeight: '300', marginTop: 2 },
+  codeValue: {
+    color: '#F5F5F7',
+    fontSize: 20,
+    fontWeight: '700',
+    letterSpacing: 3,
+    marginTop: 4,
+  },
+  codeHint: {
+    color: '#5C5C66',
+    fontSize: 11,
+    fontWeight: '300',
+    lineHeight: 17,
+    marginTop: 6,
+  },
   chev: { color: '#5C5C66', fontSize: 18 },
   modalRoot: { backgroundColor: '#0A0A0C', flex: 1, paddingHorizontal: 28 },
   modalTitle: { color: '#F5F5F7', fontSize: 24, fontWeight: '700', marginBottom: 8 },
@@ -581,16 +582,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     paddingHorizontal: 14,
   },
-  musicRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  musicChip: {
-    borderColor: '#2E2E36',
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    paddingVertical: 8,
-  },
-  musicChipOn: { borderColor: '#E8C56A', backgroundColor: 'rgba(232,197,106,0.08)' },
-  musicChipText: { color: '#F5F5F7', fontSize: 12, textAlign: 'center', textTransform: 'capitalize' },
   contactRow: {
     borderBottomColor: '#222228',
     borderBottomWidth: 1,

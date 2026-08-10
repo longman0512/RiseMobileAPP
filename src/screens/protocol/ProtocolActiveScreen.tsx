@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { HoldToConfirm } from '../../components/HoldToConfirm';
 import { ProtocolAppFeed } from '../../components/protocol/ProtocolAppFeed';
 import { ProtocolCoinBadge } from '../../components/protocol/ProtocolCoinBadge';
 import { ProtocolTimerRing } from '../../components/protocol/ProtocolTimerRing';
@@ -10,109 +11,9 @@ import { hasFocusModeSelection } from '../../lib/focusMode';
 import type { ProtocolStackParamList } from '../../navigation/protocol/ProtocolNavigator';
 import { formatTimer, PROTOCOL_THEME } from '../../lib/protocolTheme';
 import { useSession } from '../../providers/SessionProvider';
-import { COIN_LABELS, type CoinType } from '../../types/coins';
+import { COIN_LABELS } from '../../types/coins';
 
 type Props = NativeStackScreenProps<ProtocolStackParamList, 'Active'>;
-
-function sessionEyebrow(
-  protocol: CoinType,
-  segmentIndex: number,
-  plannedMinutes: number,
-  pausedFlow: boolean,
-): string {
-  if (protocol === 'reset') {
-    const duration = formatTimer(plannedMinutes * 60);
-    return pausedFlow ? `${duration} · paused Flow` : duration;
-  }
-  return `Session · ${String(segmentIndex).padStart(2, '0')}`;
-}
-
-function timerState(
-  protocol: CoinType,
-  phase: 'active' | 'overtime' | string,
-  plannedMinutes: number,
-  timeRemainingSeconds: number,
-  overtimeSeconds: number,
-  elapsedSeconds: number,
-) {
-  const totalSeconds = plannedMinutes * 60;
-
-  if (protocol === 'flow') {
-    return {
-      main: formatTimer(elapsedSeconds),
-      sub: 'elapsed · open end',
-      progress: Math.min(1, elapsedSeconds / totalSeconds),
-    };
-  }
-
-  const remaining = phase === 'overtime' ? 0 : timeRemainingSeconds;
-  const elapsed = totalSeconds - remaining;
-  return {
-    main: formatTimer(remaining),
-    sub: protocol === 'lockin' ? `of ${formatTimer(totalSeconds)}` : undefined,
-    progress: totalSeconds > 0 ? elapsed / totalSeconds : 0,
-  };
-}
-
-function FlowFootnote() {
-  return (
-    <Text style={styles.footNote}>
-      Tap <Text style={styles.copperStrong}>Reset</Text> to pause · tap{' '}
-      <Text style={styles.brassStrong}>Flow</Text> again to resume
-    </Text>
-  );
-}
-
-function ResetFootnote() {
-  return (
-    <Text style={styles.footNote}>
-      No feeds. No noise. Just a breath.{'\n'}
-      Tap <Text style={styles.brassStrong}>Flow</Text> or{' '}
-      <Text style={styles.steelStrong}>Lock In</Text> to end early.
-    </Text>
-  );
-}
-
-function ResetReflection({
-  note,
-  nextBlock,
-  onNoteChange,
-  onNextBlockChange,
-}: {
-  note: string;
-  nextBlock: string;
-  onNoteChange: (text: string) => void;
-  onNextBlockChange: (text: string) => void;
-}) {
-  return (
-    <View style={styles.reflect}>
-      <View style={styles.reflectCard}>
-        <Text style={styles.reflectQ}>What did you accomplish?</Text>
-        <TextInput
-          style={styles.reflectInput}
-          placeholder="Type or write it in your notebook…"
-          placeholderTextColor="#5C5C66"
-          value={note}
-          onChangeText={onNoteChange}
-          multiline
-          textAlignVertical="top"
-        />
-      </View>
-      <View style={styles.reflectCard}>
-        <Text style={styles.reflectQ}>What's next?</Text>
-        <TextInput
-          style={styles.reflectInput}
-          placeholder="Type or write it in your notebook…"
-          placeholderTextColor="#5C5C66"
-          value={nextBlock}
-          onChangeText={onNextBlockChange}
-          multiline
-          textAlignVertical="top"
-        />
-      </View>
-    </View>
-  );
-}
 
 export function ProtocolActiveScreen({ route }: Props) {
   const insets = useSafeAreaInsets();
@@ -123,7 +24,6 @@ export function ProtocolActiveScreen({ route }: Props) {
   const [hasFocusSelection, setHasFocusSelection] = useState(false);
 
   useEffect(() => {
-    if (protocol === 'reset') return;
     let cancelled = false;
     void hasFocusModeSelection(protocol).then((value) => {
       if (!cancelled) setHasFocusSelection(value);
@@ -133,40 +33,37 @@ export function ProtocolActiveScreen({ route }: Props) {
     };
   }, [protocol]);
 
-  const pausedFlow = session.pausedFlowRemainingSeconds != null;
-  const eyebrow = sessionEyebrow(
-    protocol,
-    session.segmentIndex,
+  /**
+   * The timer never alarms. Inside the planned length it counts down; the
+   * moment it would hit zero it inverts and counts up as "+N", and the ring
+   * fills past full. Nothing interrupts the user.
+   */
+  const timer = useMemo(() => {
+    if (session.isOvertime) {
+      return {
+        main: `+${formatTimer(session.blockOvertimeSeconds)}`,
+        sub: 'overtime · earning more',
+        progress: 1,
+      };
+    }
+    const total = session.plannedMinutes * 60;
+    return {
+      main: formatTimer(session.blockRemainingSeconds),
+      sub: `of ${formatTimer(total)}`,
+      progress: total > 0 ? session.blockElapsedSeconds / total : 0,
+    };
+  }, [
+    session.blockElapsedSeconds,
+    session.blockOvertimeSeconds,
+    session.blockRemainingSeconds,
+    session.isOvertime,
     session.plannedMinutes,
-    pausedFlow,
-  );
-
-  const timer = useMemo(
-    () =>
-      timerState(
-        protocol,
-        session.phase,
-        session.plannedMinutes,
-        session.timeRemainingSeconds,
-        session.overtimeSeconds,
-        session.elapsedSeconds,
-      ),
-    [
-      protocol,
-      session.phase,
-      session.plannedMinutes,
-      session.timeRemainingSeconds,
-      session.overtimeSeconds,
-      session.elapsedSeconds,
-    ],
-  );
-
-  const isReset = protocol === 'reset';
+  ]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
@@ -175,47 +72,41 @@ export function ProtocolActiveScreen({ route }: Props) {
             <View style={[styles.tagDot, { backgroundColor: theme.accent }]} />
             <Text style={[styles.tagLabel, { color: theme.accent }]}>{COIN_LABELS[protocol]}</Text>
           </View>
-          <Text style={styles.eyebrow}>{eyebrow}</Text>
+          <Text style={styles.eyebrow}>
+            BLOCK · {String(session.blockIndex).padStart(2, '0')}
+          </Text>
         </View>
 
-        <View style={[styles.timerWrap, isReset && styles.timerWrapReset]}>
+        <View style={styles.timerWrap}>
           <ProtocolTimerRing
             size={theme.ringSize}
             progress={timer.progress}
             gradient={theme.gradient}
-            coin={<ProtocolCoinBadge colors={theme.coinGradient} size={isReset ? 36 : 44} />}
+            coin={<ProtocolCoinBadge colors={theme.coinGradient} size={44} />}
           >
             <Text style={[styles.timerNum, { fontSize: theme.timerFontSize }]}>{timer.main}</Text>
-            {timer.sub ? <Text style={styles.timerSub}>{timer.sub}</Text> : null}
+            <Text style={[styles.timerSub, session.isOvertime && { color: theme.accent }]}>
+              {timer.sub}
+            </Text>
           </ProtocolTimerRing>
         </View>
 
-        {!isReset ? (
-          <>
-            <Text style={styles.quote}>
-              {theme.quote[0]}
-              {'\n'}
-              {theme.quote[1]}
-            </Text>
-            <ProtocolAppFeed protocol={protocol} hasFocusSelection={hasFocusSelection} />
-          </>
-        ) : (
-          <ResetReflection
-            note={session.journalNote}
-            nextBlock={session.journalNextBlock}
-            onNoteChange={session.setJournalNote}
-            onNextBlockChange={session.setJournalNextBlock}
-          />
-        )}
+        <Text style={styles.quote}>
+          {theme.quote[0]}
+          {'\n'}
+          {theme.quote[1]}
+        </Text>
+
+        <ProtocolAppFeed protocol={protocol} hasFocusSelection={hasFocusSelection} />
 
         <View style={styles.foot}>
-          {protocol === 'lockin' ? (
-            <Text style={styles.footNote}>{theme.footnote}</Text>
-          ) : protocol === 'flow' ? (
-            <FlowFootnote />
-          ) : (
-            <ResetFootnote />
-          )}
+          <Text style={styles.footNote}>
+            Tap your <Text style={styles.resetStrong}>Reset</Text> coin to pause or end the shift.
+          </Text>
+
+          {/* Always available, no justification asked. Ends everything on the
+              spot and still banks the XP — leaving early is never punished. */}
+          <HoldToConfirm label="Exit" onConfirm={() => void session.exitNow()} accent="#5C5C66" />
         </View>
       </ScrollView>
     </View>
@@ -229,7 +120,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingBottom: 30,
   },
   head: {
     alignItems: 'center',
@@ -259,14 +149,10 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: '600',
     letterSpacing: 1.47,
-    textTransform: 'uppercase',
   },
   timerWrap: {
     alignItems: 'center',
     paddingTop: 40,
-  },
-  timerWrapReset: {
-    paddingTop: 28,
   },
   timerNum: {
     color: '#F5F5F7',
@@ -287,43 +173,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '300',
     lineHeight: 24,
-    marginTop: 46,
+    marginTop: 40,
     paddingHorizontal: 40,
     textAlign: 'center',
   },
-  reflect: {
-    gap: 14,
-    marginHorizontal: 28,
-    marginTop: 30,
-  },
-  reflectCard: {
-    backgroundColor: '#131316',
-    borderColor: '#222228',
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 18,
-  },
-  reflectQ: {
-    color: '#D4855A',
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 1.32,
-    marginBottom: 10,
-    textTransform: 'uppercase',
-  },
-  reflectInput: {
-    color: '#F5F5F7',
-    fontSize: 14,
-    fontWeight: '300',
-    lineHeight: 23,
-    minHeight: 48,
-    padding: 0,
-  },
   foot: {
-    gap: 12,
+    gap: 14,
     marginTop: 'auto',
     paddingHorizontal: 28,
-    paddingTop: 24,
+    paddingTop: 26,
   },
   footNote: {
     color: '#5C5C66',
@@ -332,15 +190,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     textAlign: 'center',
   },
-  brassStrong: {
-    color: '#E8C56A',
-    fontWeight: '600',
-  },
-  steelStrong: {
-    color: '#C0C4CC',
-    fontWeight: '600',
-  },
-  copperStrong: {
+  resetStrong: {
     color: '#D4855A',
     fontWeight: '600',
   },

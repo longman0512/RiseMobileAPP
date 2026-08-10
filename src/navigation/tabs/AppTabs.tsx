@@ -1,13 +1,16 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { UsersRound } from 'lucide-react-native';
 
 import { DashboardScreen } from '../../screens/app/DashboardScreen';
+import { SquadScreen } from '../../screens/squad/SquadScreen';
 import { HistoryScreen } from '../../screens/history/HistoryScreen';
 import { SettingsScreen } from '../../screens/app/SettingsScreen';
 
 export type AppTabsParamList = {
   Focus: undefined;
+  Squad: undefined;
   Journey: undefined;
   Settings: undefined;
 };
@@ -19,6 +22,17 @@ function FocusTabIcon({ focused }: { focused: boolean }) {
     <View style={styles.tabItem}>
       <View style={[styles.roundIcon, focused ? styles.iconActive : styles.iconIdle]} />
       <Text style={[styles.tabLabel, focused ? styles.tabLabelActive : styles.tabLabelIdle]}>Focus</Text>
+    </View>
+  );
+}
+
+function SquadTabIcon({ focused }: { focused: boolean }) {
+  return (
+    <View style={styles.tabItem}>
+      <View style={styles.squadIcon}>
+        <UsersRound size={22} strokeWidth={1.5} color={focused ? '#F5F5F7' : '#5C5C66'} />
+      </View>
+      <Text style={[styles.tabLabel, focused ? styles.tabLabelActive : styles.tabLabelIdle]}>Squad</Text>
     </View>
   );
 }
@@ -69,6 +83,13 @@ export function AppTabs() {
         }}
       />
       <Tab.Screen
+        name="Squad"
+        component={SquadScreen}
+        options={{
+          tabBarIcon: ({ focused }) => <SquadTabIcon focused={focused} />,
+        }}
+      />
+      <Tab.Screen
         name="Journey"
         component={HistoryScreen}
         options={{
@@ -90,7 +111,7 @@ const styles = StyleSheet.create({
   tabItem: {
     alignItems: 'center',
     gap: 5,
-    minWidth: 72,
+    minWidth: 56,
   },
   tabLabel: {
     fontSize: 10,
@@ -121,6 +142,12 @@ const styles = StyleSheet.create({
   },
   iconIdle: {
     borderColor: '#5C5C66',
+  },
+  squadIcon: {
+    alignItems: 'center',
+    height: 22,
+    justifyContent: 'center',
+    width: 22,
   },
   barsIcon: {
     gap: 3,

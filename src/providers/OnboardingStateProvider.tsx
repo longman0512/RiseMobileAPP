@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { useAuth } from './AuthProvider';
+
 type OnboardingStateContextValue = {
   loading: boolean;
   complete: boolean;
@@ -10,37 +12,66 @@ type OnboardingStateContextValue = {
 
 const OnboardingStateContext = createContext<OnboardingStateContextValue | null>(null);
 
-const KEY = 'onboardingComplete';
+/** Pre-multi-account key. Migrated into the first signed-in user's key. */
+const LEGACY_KEY = 'onboardingComplete';
+
+function keyForUser(userId: string): string {
+  return `onboardingComplete:${userId}`;
+}
 
 export function OnboardingStateProvider({ children }: { children: React.ReactNode }) {
-  const [hydrated, setHydrated] = useState(false);
+  const { session, phase } = useAuth();
+  const userId = session?.user?.id ?? null;
+
+  const [hydratedUserId, setHydratedUserId] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [complete, setComplete] = useState(false);
 
-  const loading = !hydrated || fetching;
+  const signedIn = phase === 'signedIn' && !!userId;
+  const loading = signedIn && (hydratedUserId !== userId || fetching);
 
   const refresh = useCallback(async () => {
+    if (!userId) {
+      setComplete(false);
+      setHydratedUserId(null);
+      setFetching(false);
+      return;
+    }
+
     setFetching(true);
-    const value = await AsyncStorage.getItem(KEY);
+    const key = keyForUser(userId);
+    let value = await AsyncStorage.getItem(key);
+
+    if (value == null) {
+      // One-time migration so existing installs are not re-onboarded.
+      const legacy = await AsyncStorage.getItem(LEGACY_KEY);
+      if (legacy === 'true') {
+        await AsyncStorage.setItem(key, 'true');
+        await AsyncStorage.removeItem(LEGACY_KEY);
+        value = 'true';
+      }
+    }
+
     setComplete(value === 'true');
-    setHydrated(true);
+    setHydratedUserId(userId);
     setFetching(false);
-  }, []);
+  }, [userId]);
 
   const markComplete = useCallback(async () => {
-    await AsyncStorage.setItem(KEY, 'true');
+    if (!userId) return;
+    await AsyncStorage.setItem(keyForUser(userId), 'true');
     setComplete(true);
-    setHydrated(true);
-  }, []);
+    setHydratedUserId(userId);
+  }, [userId]);
 
   useEffect(() => {
     refresh().catch(() => {
-      setHydrated(true);
+      setHydratedUserId(userId);
       setFetching(false);
     });
-  }, [refresh]);
+  }, [refresh, userId]);
 
-  const resolvedComplete = hydrated ? complete : false;
+  const resolvedComplete = hydratedUserId === userId ? complete : false;
 
   const ctx = useMemo<OnboardingStateContextValue>(
     () => ({

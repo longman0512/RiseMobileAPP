@@ -9,7 +9,6 @@ import React, {
 } from 'react';
 import { Alert, AppState, type AppStateStatus, Vibration } from 'react-native';
 
-import { SessionResumeOverlay } from '../components/SessionResumeOverlay';
 import { deactivateFocusModeOnSessionEnd, syncFocusModeForProtocol } from '../lib/focusMode';
 import {
   enqueueOfflineSessionJob,
@@ -18,92 +17,89 @@ import {
 } from '../lib/offlineSessionQueue';
 import { navigateProtocolStack, resetToApp } from '../lib/navigationRef';
 import { showSuccessToast } from '../lib/toast';
+import { PROTOCOL_CONFIG, RESET_INSTRUCTIONS, RESET_INSTRUCTION_ROTATE_MS } from '../lib/protocolConfig';
+import { suggestPauseMinutes, type TirednessLevel } from '../lib/pauseDuration';
+import { endShift as commitShift, type ShiftEndReason } from '../lib/shiftApi';
+import { endSession, type SessionSegment } from '../lib/sessionApi';
 import {
-  PROTOCOL_CONFIG,
-  RESET_INSTRUCTIONS,
-  RESET_INSTRUCTION_ROTATE_MS,
-} from '../lib/protocolConfig';
-import { openFlowPlaylist } from '../lib/flowMusic';
-import { sessionPointsEarned } from '../lib/sessionScoring';
-import {
-  endSession,
-  resolveSessionSave,
-  sumFocusMinutes,
-  sumRecoveryMinutes,
-  sumSegmentMinutes,
-  updateSessionNotes,
-  type SessionSegment,
-} from '../lib/sessionApi';
+  focusBlockCount,
+  shiftXp,
+  totalFocusMinutes,
+  totalOvertimeMinutes,
+  type ShiftBlock,
+  type XpBreakdown,
+} from '../lib/xp';
+import { publishStatus, resetPublishedStatusCache } from '../lib/squadApi';
 import { useAuth } from './AuthProvider';
 import { useCoins } from './CoinsProvider';
-import { useUserPreferences } from './UserPreferencesProvider';
 import type { CoinType } from '../types/coins';
 
+/**
+ * A Shift is a chain of blocks. There is no "single session" mode — a shift
+ * that happened to contain one block is just a short shift. Nothing is decided
+ * up front: the user taps Lock In or Flow to start a block, and only when they
+ * tap the Reset coin do they choose Pause (another block coming) or End Shift
+ * (done for the day).
+ */
 export type SessionPhase =
   | 'idle'
   | 'prestart'
   | 'active'
   | 'overtime'
-  | 'summary'
-  | 'journal';
+  | 'resetChoice'
+  | 'tiredness'
+  | 'closeout'
+  | 'breathing'
+  | 'endShift'
+  | 'finale';
 
-export type SessionSummary = {
-  protocol: CoinType;
-  plannedMinutes: number;
-  actualMinutes: number;
+export type FinaleSummary = {
+  xp: XpBreakdown;
   focusMinutes: number;
-  recoveryMinutes: number;
   overtimeMinutes: number;
-  segments: SessionSegment[];
-  streak: number | null;
-  exits: number;
-  pointsEarned: number;
-  totalPointsAfter: number;
+  blockCount: number;
+  shiftMinutes: number;
+  lifetimeXp: number | null;
 };
-
-function segmentElapsedSeconds(
-  plannedMins: number,
-  timeRemainingSeconds: number,
-  overtimeSeconds: number,
-): number {
-  return Math.max(0, plannedMins * 60 - timeRemainingSeconds + overtimeSeconds);
-}
-
-function elapsedSecondsToMinutes(elapsedSeconds: number): number {
-  return Math.max(1, Math.ceil(elapsedSeconds / 60));
-}
 
 type SessionContextValue = {
   phase: SessionPhase;
   activeProtocol: CoinType | null;
   plannedMinutes: number;
-  timeRemainingSeconds: number;
-  overtimeSeconds: number;
-  /** Elapsed seconds for open-ended FLOW sessions. */
-  elapsedSeconds: number;
-  sessionExits: number;
-  flowThought: string;
+  /** Seconds elapsed in the current block, standard + overtime. */
+  blockElapsedSeconds: number;
+  /** Counts down to zero, then stays there while overtime accrues. */
+  blockRemainingSeconds: number;
+  blockOvertimeSeconds: number;
+  isOvertime: boolean;
+  /** 1-based position of the current block within the shift. */
+  blockIndex: number;
+  shiftOpen: boolean;
+  shiftBlocks: ShiftBlock[];
+  shiftFocusMinutes: number;
   resetInstruction: string;
-  summary: SessionSummary | null;
-  journalNote: string;
-  journalNextBlock: string;
-  resumeFlowPrompt: boolean;
-  pendingFlowResumeSeconds: number | null;
-  pausedFlowRemainingSeconds: number | null;
-  /** 1-based index of the current segment within this session. */
-  segmentIndex: number;
-  isSavingSession: boolean;
+  tiredness: TirednessLevel | null;
+  pauseMinutes: number;
+  pauseRemainingSeconds: number;
+  pauseComplete: boolean;
+  closeoutDone: string;
+  closeoutNext: string;
+  nextTarget: string;
+  finale: FinaleSummary | null;
+  isSaving: boolean;
   setPlannedMinutes: (minutes: number) => void;
-  setFlowThought: (text: string) => void;
-  setJournalNote: (text: string) => void;
-  setJournalNextBlock: (text: string) => void;
-  beginSession: (plannedMinutesOverride?: number) => void;
-  endSessionEarly: () => void;
-  finishSummary: () => Promise<void>;
-  skipJournal: () => Promise<void>;
-  saveJournal: () => Promise<void>;
-  extendFlowTwentyMinutes: () => void;
-  dismissResumeFlowPrompt: () => void;
+  setCloseoutDone: (text: string) => void;
+  setCloseoutNext: (text: string) => void;
+  setNextTarget: (text: string) => void;
+  beginBlock: (plannedMinutesOverride?: number) => void;
+  chooseTiredness: (level: TirednessLevel) => void;
+  startPause: () => void;
+  finishCloseout: () => void;
+  finishBreathing: () => void;
+  chooseEndShift: () => void;
+  confirmEndShift: () => Promise<void>;
+  dismissFinale: () => void;
+  exitNow: () => Promise<void>;
   cancelSession: () => void;
   handleProtocolTrigger: (protocol: CoinType, options?: { hasRegisteredCoin?: boolean }) => void;
   isSessionBlocking: () => boolean;
@@ -123,122 +119,180 @@ export function queuePendingProtocol(protocol: CoinType): void {
   pendingProtocol = protocol;
 }
 
+const TICK_POLL_MS = 500;
+/** A shift left untouched this long is closed silently on the next app open. */
+const SHIFT_AUTO_CLOSE_MS = 4 * 60 * 60 * 1000;
+
+function minutesFromSeconds(seconds: number): number {
+  return Math.max(0, Math.round(seconds / 60));
+}
+
 export function SessionProvider({ children }: { children: React.ReactNode }) {
-  const { session, phase: authPhase } = useAuth();
+  const { phase: authPhase } = useAuth();
   const { coins } = useCoins();
-  const { musicService } = useUserPreferences();
 
-  const [sessionPhase, setSessionPhase] = useState<SessionPhase>('idle');
-  const [activeProtocol, setActiveProtocol] = useState<CoinType | null>(null);
-  const [plannedMinutes, setPlannedMinutes] = useState(30);
-  const [timeRemainingSeconds, setTimeRemainingSeconds] = useState(0);
-  const [overtimeSeconds, setOvertimeSeconds] = useState(0);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [sessionExits, setSessionExits] = useState(0);
-  const [flowThought, setFlowThought] = useState('');
+  const [phase, setPhaseState] = useState<SessionPhase>('idle');
+  const [activeProtocol, setActiveProtocolState] = useState<CoinType | null>(null);
+  const [plannedMinutes, setPlannedMinutesState] = useState(50);
+  const [blockElapsedSeconds, setBlockElapsedState] = useState(0);
+  const [shiftBlocks, setShiftBlocksState] = useState<ShiftBlock[]>([]);
+  const [tiredness, setTirednessState] = useState<TirednessLevel | null>(null);
+  const [pauseMinutes, setPauseMinutesState] = useState(0);
+  const [pauseRemainingSeconds, setPauseRemainingState] = useState(0);
+  const [pauseComplete, setPauseCompleteState] = useState(false);
+  const [closeoutDone, setCloseoutDoneState] = useState('');
+  const [closeoutNext, setCloseoutNextState] = useState('');
+  const [nextTarget, setNextTargetState] = useState('');
+  const [finale, setFinale] = useState<FinaleSummary | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [resetInstructionIndex, setResetInstructionIndex] = useState(0);
-  const [segments, setSegments] = useState<SessionSegment[]>([]);
-  const [pausedFlowRemainingSeconds, setPausedFlowRemainingSeconds] = useState<number | null>(null);
-  const [summary, setSummary] = useState<SessionSummary | null>(null);
-  const [journalNote, setJournalNote] = useState('');
-  const [journalNextBlock, setJournalNextBlock] = useState('');
-  const [resumeFlowPrompt, setResumeFlowPrompt] = useState(false);
-  const [pendingFlowResumeDisplay, setPendingFlowResumeDisplay] = useState<number | null>(null);
-  const [isSavingSession, setIsSavingSession] = useState(false);
-  const [showResumeOverlay, setShowResumeOverlay] = useState(false);
 
-  const RESUME_OVERLAY_MIN_BACKGROUND_MS = 1500;
-
-  const pendingFlowResumeSecondsRef = useRef<number | null>(null);
-  const segmentStartedAt = useRef<string | null>(null);
-  const sessionStartedAt = useRef<string | null>(null);
-  const sessionPrimaryCoinRef = useRef<CoinType | null>(null);
-  const lastHapticAt = useRef<number>(0);
-  const savingRef = useRef(false);
-  const lastPersistedSessionId = useRef<string | null>(null);
-  const pendingPersistRef = useRef<Promise<{
-    ok: boolean;
-    sessionId?: string;
-    message?: string;
-    queued?: boolean;
-  }> | null>(null);
-
-  const timeRemainingRef = useRef(0);
-  const overtimeSecondsRef = useRef(0);
-  const elapsedSecondsRef = useRef(0);
-  const activeProtocolRef = useRef<CoinType | null>(null);
-  const timerSnapshotRef = useRef<{
-    phase: 'active' | 'overtime';
-    timeRemainingSeconds: number;
-    overtimeSeconds: number;
-    elapsedSeconds: number;
-    protocol: CoinType | null;
-    wallMs: number;
-  } | null>(null);
-  const wentBackgroundAtRef = useRef<number | null>(null);
+  // Everything the ticker and the commit path read comes from refs, so neither
+  // is affected by unrelated re-renders (typing in a prompt, for example) and
+  // both see live values when they fire between renders.
+  const phaseRef = useRef<SessionPhase>('idle');
+  const protocolRef = useRef<CoinType | null>(null);
+  const plannedMinutesRef = useRef(50);
+  const blockElapsedRef = useRef(0);
+  const blockStartedAtRef = useRef<string | null>(null);
+  const shiftBlocksRef = useRef<ShiftBlock[]>([]);
+  const shiftStartedAtRef = useRef<string | null>(null);
+  const shiftTouchedAtRef = useRef<number>(0);
+  const pauseRemainingRef = useRef(0);
+  const pauseCompleteRef = useRef(false);
+  const closeoutDoneRef = useRef('');
+  const closeoutNextRef = useRef('');
+  const nextTargetRef = useRef('');
+  const lastTickMsRef = useRef(Date.now());
+  const lastHapticAtRef = useRef(0);
+  const committingRef = useRef(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
-  const completeActiveSessionRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    timeRemainingRef.current = timeRemainingSeconds;
-  }, [timeRemainingSeconds]);
+  const setPhase = useCallback((next: SessionPhase) => {
+    phaseRef.current = next;
+    setPhaseState(next);
+  }, []);
 
-  useEffect(() => {
-    overtimeSecondsRef.current = overtimeSeconds;
-  }, [overtimeSeconds]);
+  const setProtocol = useCallback((next: CoinType | null) => {
+    protocolRef.current = next;
+    setActiveProtocolState(next);
+  }, []);
 
-  useEffect(() => {
-    elapsedSecondsRef.current = elapsedSeconds;
-  }, [elapsedSeconds]);
+  const setPlannedMinutes = useCallback((minutes: number) => {
+    plannedMinutesRef.current = minutes;
+    setPlannedMinutesState(minutes);
+  }, []);
 
-  useEffect(() => {
-    activeProtocolRef.current = activeProtocol;
-  }, [activeProtocol]);
+  const setBlockElapsed = useCallback((seconds: number) => {
+    blockElapsedRef.current = seconds;
+    setBlockElapsedState(seconds);
+  }, []);
 
-  function playLockInCompleteFeedback() {
-    Vibration.vibrate([0, 80, 60, 120]);
-  }
+  const setShiftBlocks = useCallback((blocks: ShiftBlock[]) => {
+    shiftBlocksRef.current = blocks;
+    setShiftBlocksState(blocks);
+  }, []);
+
+  const setPauseRemaining = useCallback((seconds: number) => {
+    pauseRemainingRef.current = seconds;
+    setPauseRemainingState(seconds);
+  }, []);
+
+  const setPauseComplete = useCallback((value: boolean) => {
+    pauseCompleteRef.current = value;
+    setPauseCompleteState(value);
+  }, []);
+
+  const setCloseoutDone = useCallback((text: string) => {
+    closeoutDoneRef.current = text;
+    setCloseoutDoneState(text);
+  }, []);
+
+  const setCloseoutNext = useCallback((text: string) => {
+    closeoutNextRef.current = text;
+    setCloseoutNextState(text);
+  }, []);
+
+  const setNextTarget = useCallback((text: string) => {
+    nextTargetRef.current = text;
+    setNextTargetState(text);
+  }, []);
 
   const hasCoinType = useCallback(
     (type: CoinType) => coins.some((c) => c.coin_type === type && c.active),
     [coins],
   );
 
-  const openPreStart = useCallback((protocol: CoinType) => {
-    const config = PROTOCOL_CONFIG[protocol];
-    setActiveProtocol(protocol);
-    setPlannedMinutes(config.defaultMinutes);
-    setTimeRemainingSeconds(0);
-    setOvertimeSeconds(0);
-    setElapsedSeconds(0);
-    setSessionExits(0);
-    setFlowThought('');
-    setResetInstructionIndex(0);
-    setSegments([]);
-    setPausedFlowRemainingSeconds(null);
-    setSummary(null);
-    setJournalNote('');
-    setJournalNextBlock('');
-    setResumeFlowPrompt(false);
-    pendingFlowResumeSecondsRef.current = null;
-    setPendingFlowResumeDisplay(null);
-    setSessionPhase('prestart');
-    navigateProtocolStack('PreStart', { protocol });
+  const touchShift = useCallback(() => {
+    shiftTouchedAtRef.current = Date.now();
   }, []);
 
-  const persistInterimSegment = useCallback(
-    async (protocol: CoinType, durationMins: number) => {
-      if (authPhase !== 'signedIn' || savingRef.current) return;
-      const started = segmentStartedAt.current ?? new Date().toISOString();
-      const seg: SessionSegment = { protocol, duration_mins: durationMins };
+  // -------------------------------------------------------------------------
+  // Derived block figures
+  // -------------------------------------------------------------------------
+
+  const plannedSeconds = plannedMinutes * 60;
+  const blockRemainingSeconds = Math.max(0, plannedSeconds - blockElapsedSeconds);
+  const blockOvertimeSeconds = Math.max(0, blockElapsedSeconds - plannedSeconds);
+  const isOvertime = blockOvertimeSeconds > 0;
+
+  /** Close the running block and fold it into the shift chain. */
+  const bankCurrentBlock = useCallback((): ShiftBlock | null => {
+    const protocol = protocolRef.current;
+    if (!protocol) return null;
+
+    const elapsed = blockElapsedRef.current;
+    const planned = plannedMinutesRef.current * 60;
+    const standardSecs = Math.min(elapsed, planned);
+    const overtimeSecs = Math.max(0, elapsed - planned);
+
+    const block: ShiftBlock = {
+      protocol,
+      standardMins: minutesFromSeconds(standardSecs),
+      overtimeMins: minutesFromSeconds(overtimeSecs),
+    };
+
+    // A block the user barely started should not bank a phantom minute.
+    if (block.standardMins === 0 && block.overtimeMins === 0) return null;
+
+    setShiftBlocks([...shiftBlocksRef.current, block]);
+    return block;
+  }, [setShiftBlocks]);
+
+  /** Mirror the chain to the squad table so friends see live state. */
+  const publishShiftStatus = useCallback(
+    (state: 'lockin' | 'flow' | 'paused' | 'offline', startedAt?: string | null) => {
+      void publishStatus({
+        state,
+        startedAt: startedAt ?? blockStartedAtRef.current,
+        shiftStartedAt: shiftStartedAtRef.current,
+        blocks: shiftBlocksRef.current.map((b) => ({
+          protocol: b.protocol,
+          duration_mins: b.standardMins + b.overtimeMins,
+        })),
+      });
+    },
+    [],
+  );
+
+  /** Keep the legacy per-block history rows so Journey/streaks keep working. */
+  const recordBlockHistory = useCallback(
+    async (block: ShiftBlock, startedAt: string) => {
+      if (authPhase !== 'signedIn') return;
+      if (block.protocol === 'reset') return;
+
+      const segments: SessionSegment[] = [
+        { protocol: block.protocol, duration_mins: block.standardMins + block.overtimeMins },
+      ];
       const payload = {
-        coin_type: protocol,
-        started_at: started,
-        duration_mins: durationMins,
+        coin_type: block.protocol,
+        started_at: startedAt,
+        duration_mins: block.standardMins + block.overtimeMins,
         note: null,
         next_block: null,
-        segments: [seg],
+        segments,
       };
+
       const result = await endSession(payload);
       if (!result.ok && shouldQueueSessionError(result.message)) {
         await enqueueOfflineSessionJob({
@@ -251,55 +305,273 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [authPhase],
   );
 
-  const scheduleFlowResumeAfterJournal = useCallback(() => {
-    const secs = pausedFlowRemainingSeconds;
-    if (secs == null || secs < 1) return;
-    pendingFlowResumeSecondsRef.current = secs;
-    setPendingFlowResumeDisplay(secs);
-    setResumeFlowPrompt(true);
-    Alert.alert('Resume FLOW', 'Tap your FLOW coin to resume your session.');
-  }, [pausedFlowRemainingSeconds]);
+  const resetShiftState = useCallback(() => {
+    committingRef.current = false;
+    setPhase('idle');
+    setProtocol(null);
+    setBlockElapsed(0);
+    setShiftBlocks([]);
+    setTirednessState(null);
+    setPauseMinutesState(0);
+    setPauseRemaining(0);
+    setPauseComplete(false);
+    setCloseoutDone('');
+    setCloseoutNext('');
+    setNextTarget('');
+    shiftStartedAtRef.current = null;
+    blockStartedAtRef.current = null;
+    void deactivateFocusModeOnSessionEnd();
+    publishShiftStatus('offline');
+  }, [
+    publishShiftStatus,
+    setBlockElapsed,
+    setCloseoutDone,
+    setCloseoutNext,
+    setNextTarget,
+    setPauseComplete,
+    setPauseRemaining,
+    setPhase,
+    setProtocol,
+    setShiftBlocks,
+  ]);
 
-  const startFlowSegment = useCallback((resumeElapsedSeconds = 0) => {
-    const now = new Date().toISOString();
-    if (!sessionStartedAt.current) sessionStartedAt.current = now;
-    segmentStartedAt.current = now;
-    setActiveProtocol('flow');
-    setPlannedMinutes(PROTOCOL_CONFIG.flow.defaultMinutes);
-    setElapsedSeconds(resumeElapsedSeconds);
-    setTimeRemainingSeconds(0);
-    setOvertimeSeconds(0);
-    setSessionPhase('active');
-    lastHapticAt.current = Date.now();
-    void syncFocusModeForProtocol('flow');
-    navigateProtocolStack('Active', { protocol: 'flow' });
-  }, []);
+  // -------------------------------------------------------------------------
+  // Committing a shift — the only moment XP becomes permanent
+  // -------------------------------------------------------------------------
 
-  const startActiveSegment = useCallback((protocol: CoinType, durationSeconds: number) => {
-    const now = new Date().toISOString();
-    if (!sessionStartedAt.current) sessionStartedAt.current = now;
-    segmentStartedAt.current = now;
-    const segmentPlannedMins = Math.max(1, Math.ceil(durationSeconds / 60));
-    setActiveProtocol(protocol);
-    setPlannedMinutes(segmentPlannedMins);
-    setTimeRemainingSeconds(durationSeconds);
-    setOvertimeSeconds(0);
-    setElapsedSeconds(0);
-    setSessionPhase('active');
-    lastHapticAt.current = Date.now();
-    if (protocol === 'reset') {
-      setResetInstructionIndex(0);
+  const commitShiftNow = useCallback(
+    async (reason: ShiftEndReason): Promise<FinaleSummary | null> => {
+      if (committingRef.current) return null;
+      committingRef.current = true;
+      setIsSaving(true);
+
+      try {
+        const blocks = shiftBlocksRef.current;
+        const startedAt = shiftStartedAtRef.current ?? new Date().toISOString();
+        const xp = shiftXp(blocks);
+        const summary: FinaleSummary = {
+          xp,
+          focusMinutes: totalFocusMinutes(blocks),
+          overtimeMinutes: totalOvertimeMinutes(blocks),
+          blockCount: focusBlockCount(blocks),
+          shiftMinutes: Math.max(
+            0,
+            Math.round((Date.now() - new Date(startedAt).getTime()) / 60000),
+          ),
+          lifetimeXp: null,
+        };
+
+        if (blocks.length === 0 || authPhase !== 'signedIn') {
+          return summary;
+        }
+
+        const result = await commitShift({
+          startedAt,
+          blocks,
+          focusMins: summary.focusMinutes,
+          overtimeMins: summary.overtimeMinutes,
+          blockCount: summary.blockCount,
+          xp,
+          nextTarget: nextTargetRef.current.trim() || null,
+          reason,
+        });
+
+        if (!result.ok) {
+          // The per-block history rows are already saved (or queued), so the
+          // work is not lost — only the shift roll-up failed.
+          showSuccessToast('Shift saved locally', 'XP will sync when you are back online.');
+          return summary;
+        }
+
+        return { ...summary, lifetimeXp: result.lifetimeXp ?? null };
+      } finally {
+        committingRef.current = false;
+        setIsSaving(false);
+      }
+    },
+    [authPhase],
+  );
+
+  // -------------------------------------------------------------------------
+  // Blocks
+  // -------------------------------------------------------------------------
+
+  const openPreStart = useCallback(
+    (protocol: CoinType) => {
+      const config = PROTOCOL_CONFIG[protocol];
+      setProtocol(protocol);
+      setPlannedMinutes(config.defaultMinutes);
+      setBlockElapsed(0);
+      setPhase('prestart');
+      navigateProtocolStack('PreStart', { protocol });
+    },
+    [setBlockElapsed, setPhase, setPlannedMinutes, setProtocol],
+  );
+
+  const startBlock = useCallback(
+    (protocol: CoinType, minutes: number) => {
+      const now = new Date().toISOString();
+      if (!shiftStartedAtRef.current) shiftStartedAtRef.current = now;
+      blockStartedAtRef.current = now;
+      touchShift();
+
+      setProtocol(protocol);
+      setPlannedMinutes(minutes);
+      setBlockElapsed(0);
+      setPauseComplete(false);
+      setPauseRemaining(0);
+      setTirednessState(null);
+      setPhase('active');
+      lastTickMsRef.current = Date.now();
+      lastHapticAtRef.current = Date.now();
+
+      void syncFocusModeForProtocol(protocol);
+      publishShiftStatus(protocol === 'flow' ? 'flow' : 'lockin', now);
+      navigateProtocolStack('Active', { protocol });
+    },
+    [
+      publishShiftStatus,
+      setBlockElapsed,
+      setPauseComplete,
+      setPauseRemaining,
+      setPhase,
+      setPlannedMinutes,
+      setProtocol,
+      touchShift,
+    ],
+  );
+
+  const beginBlock = useCallback(
+    (plannedMinutesOverride?: number) => {
+      const protocol = protocolRef.current;
+      if (!protocol) return;
+      startBlock(protocol, plannedMinutesOverride ?? plannedMinutesRef.current);
+    },
+    [startBlock],
+  );
+
+  // -------------------------------------------------------------------------
+  // Reset coin → Pause or End Shift
+  // -------------------------------------------------------------------------
+
+  const openResetChoice = useCallback(() => {
+    setPhase('resetChoice');
+    navigateProtocolStack('ResetChoice', {});
+  }, [setPhase]);
+
+  /** Pause chosen: bank the block, then ask how tired they are. */
+  const startPause = useCallback(() => {
+    const banked = bankCurrentBlock();
+    if (banked && blockStartedAtRef.current) {
+      void recordBlockHistory(banked, blockStartedAtRef.current);
     }
-    void syncFocusModeForProtocol(protocol);
-    navigateProtocolStack('Active', { protocol });
-  }, []);
+    setProtocol(null);
+    setBlockElapsed(0);
+    touchShift();
+    setPhase('tiredness');
+    navigateProtocolStack('Tiredness', {});
+  }, [bankCurrentBlock, recordBlockHistory, setBlockElapsed, setPhase, setProtocol, touchShift]);
 
-  const closeSegment = useCallback((protocol: CoinType, elapsedSeconds: number) => {
-    const mins = elapsedSecondsToMinutes(elapsedSeconds);
-    setSegments((prev) => [...prev, { protocol, duration_mins: mins }]);
-  }, []);
+  const chooseTiredness = useCallback(
+    (level: TirednessLevel) => {
+      const blocks = shiftBlocksRef.current;
+      const last = blocks[blocks.length - 1];
+      const minutes = suggestPauseMinutes({
+        tiredness: level,
+        shiftFocusMinutes: totalFocusMinutes(blocks),
+        cameFromOvertime: (last?.overtimeMins ?? 0) > 0,
+      });
 
-  const flowElapsed = useCallback(() => Math.max(1, elapsedSecondsRef.current), []);
+      setTirednessState(level);
+      setPauseMinutesState(minutes);
+      setPauseRemaining(minutes * 60);
+      setPauseComplete(false);
+      setPhase('closeout');
+      navigateProtocolStack('Closeout', {});
+    },
+    [setPauseComplete, setPauseRemaining, setPhase],
+  );
+
+  const finishCloseout = useCallback(() => {
+    // Record the pause itself so the chain and the squad view show it.
+    const mins = pauseMinutes;
+    setShiftBlocks([
+      ...shiftBlocksRef.current,
+      { protocol: 'reset', standardMins: mins, overtimeMins: 0 },
+    ]);
+
+    setResetInstructionIndex(0);
+    setPhase('breathing');
+    lastTickMsRef.current = Date.now();
+    // Apps stay blocked through the pause — no deactivate here on purpose.
+    publishShiftStatus('paused', new Date().toISOString());
+    navigateProtocolStack('Breathe', {});
+  }, [pauseMinutes, publishShiftStatus, setPhase, setShiftBlocks]);
+
+  /** Leaving the breathing screen: the shift stays open, awaiting a coin tap. */
+  const finishBreathing = useCallback(() => {
+    setPhase('idle');
+    touchShift();
+    resetToApp();
+  }, [setPhase, touchShift]);
+
+  const chooseEndShift = useCallback(() => {
+    const banked = bankCurrentBlock();
+    if (banked && blockStartedAtRef.current) {
+      void recordBlockHistory(banked, blockStartedAtRef.current);
+    }
+    setProtocol(null);
+    setBlockElapsed(0);
+    setPhase('endShift');
+    navigateProtocolStack('EndShift', {});
+  }, [bankCurrentBlock, recordBlockHistory, setBlockElapsed, setPhase, setProtocol]);
+
+  const confirmEndShift = useCallback(async () => {
+    const summary = await commitShiftNow('end_shift');
+    void deactivateFocusModeOnSessionEnd();
+    publishShiftStatus('offline');
+    setFinale(summary);
+    setPhase('finale');
+    navigateProtocolStack('Finale', {});
+  }, [commitShiftNow, publishShiftStatus, setPhase]);
+
+  const dismissFinale = useCallback(() => {
+    setFinale(null);
+    resetShiftState();
+    resetToApp();
+  }, [resetShiftState]);
+
+  /**
+   * The always-available escape hatch. Ends the block and the shift on the
+   * spot, with no reward screen — but the XP is still banked. Leaving early is
+   * a neutral fact, never a penalty.
+   */
+  const exitNow = useCallback(async () => {
+    const banked = bankCurrentBlock();
+    if (banked && blockStartedAtRef.current) {
+      void recordBlockHistory(banked, blockStartedAtRef.current);
+    }
+    await commitShiftNow('exit');
+    resetShiftState();
+    resetToApp();
+  }, [bankCurrentBlock, commitShiftNow, recordBlockHistory, resetShiftState]);
+
+  const cancelSession = useCallback(() => {
+    // Backing out of PreStart never started a block; if that leaves the shift
+    // with nothing in it, close it entirely.
+    setProtocol(null);
+    setBlockElapsed(0);
+    if (shiftBlocksRef.current.length === 0) {
+      resetShiftState();
+    } else {
+      setPhase('idle');
+    }
+    resetToApp();
+  }, [resetShiftState, setBlockElapsed, setPhase, setProtocol]);
+
+  // -------------------------------------------------------------------------
+  // Coin taps
+  // -------------------------------------------------------------------------
 
   const handleProtocolTrigger = useCallback(
     (protocol: CoinType, options?: { hasRegisteredCoin?: boolean }) => {
@@ -316,499 +588,110 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      if (sessionPhase === 'idle') {
-        const pending = pendingFlowResumeSecondsRef.current;
-        if (protocol === 'flow' && pending != null && pending > 0) {
-          pendingFlowResumeSecondsRef.current = null;
-          setPendingFlowResumeDisplay(null);
-          setResumeFlowPrompt(false);
-          setPausedFlowRemainingSeconds(null);
-          sessionPrimaryCoinRef.current = 'flow';
-          setActiveProtocol('flow');
-          startFlowSegment(pending);
+      const current = phaseRef.current;
+
+      if (protocol === 'reset') {
+        // Reset only means something while a shift exists.
+        if (current === 'active' || current === 'overtime') {
+          openResetChoice();
           return;
         }
-        openPreStart(protocol);
-        return;
-      }
-
-      if (sessionPhase === 'prestart') {
-        openPreStart(protocol);
-        return;
-      }
-
-      if (sessionPhase === 'active' || sessionPhase === 'overtime') {
-        const current = activeProtocol;
-        if (!current) return;
-
-        if (current === 'lockin') return;
-
-        if (current === 'flow') {
-          if (protocol === 'lockin') {
-            const elapsed = flowElapsed();
-            void persistInterimSegment('flow', elapsedSecondsToMinutes(elapsed));
-            openPreStart('lockin');
-            return;
-          }
-          if (protocol === 'reset') {
-            closeSegment('flow', flowElapsed());
-            setPausedFlowRemainingSeconds(elapsedSecondsRef.current);
-            const resetSeconds = PROTOCOL_CONFIG.reset.defaultMinutes * 60;
-            startActiveSegment('reset', resetSeconds);
-          }
-          if (protocol === 'flow') {
-            // Ignore duplicate Flow tap while already in Flow.
-          }
+        if (current === 'idle' && shiftStartedAtRef.current) {
+          openResetChoice();
           return;
         }
-
-        if (current === 'reset') {
-          if (protocol === 'flow') {
-            if (pausedFlowRemainingSeconds != null) {
-              const elapsed = segmentElapsedSeconds(
-                plannedMinutes,
-                timeRemainingSeconds,
-                overtimeSeconds,
-              );
-              closeSegment('reset', Math.max(elapsed, 1));
-              startFlowSegment(pausedFlowRemainingSeconds);
-              setPausedFlowRemainingSeconds(null);
-            } else {
-              completeActiveSessionRef.current?.();
-            }
-            return;
-          }
-          if (protocol === 'lockin') {
-            const elapsed = segmentElapsedSeconds(
-              plannedMinutes,
-              timeRemainingSeconds,
-              overtimeSeconds,
-            );
-            const resetMins = elapsedSecondsToMinutes(elapsed);
-            closeSegment('reset', Math.max(elapsed, 1));
-            setPausedFlowRemainingSeconds(null);
-            pendingFlowResumeSecondsRef.current = null;
-            setPendingFlowResumeDisplay(null);
-            void persistInterimSegment('reset', resetMins);
-            openPreStart('lockin');
-          }
+        if (current === 'breathing') {
+          openResetChoice();
         }
-      }
-    },
-    [
-      activeProtocol,
-      authPhase,
-      flowElapsed,
-      hasCoinType,
-      openPreStart,
-      overtimeSeconds,
-      pausedFlowRemainingSeconds,
-      persistInterimSegment,
-      plannedMinutes,
-      sessionPhase,
-      startActiveSegment,
-      startFlowSegment,
-      timeRemainingSeconds,
-    ],
-  );
-
-  const beginSession = useCallback(
-    (plannedMinutesOverride?: number) => {
-      if (!activeProtocol) return;
-      sessionStartedAt.current = new Date().toISOString();
-      sessionPrimaryCoinRef.current = activeProtocol;
-      setSegments([]);
-      setSessionExits(0);
-      timerSnapshotRef.current = null;
-
-      if (activeProtocol === 'flow') {
-        setPlannedMinutes(PROTOCOL_CONFIG.flow.defaultMinutes);
-        startFlowSegment(0);
-        void openFlowPlaylist(musicService);
         return;
       }
 
-      const mins = plannedMinutesOverride ?? plannedMinutes;
-      setPlannedMinutes(mins);
-      startActiveSegment(activeProtocol, mins * 60);
+      // Lock In / Flow start or resume a block — always by coin tap.
+      if (current === 'idle' || current === 'prestart' || current === 'breathing') {
+        openPreStart(protocol);
+      }
+      // While a block runs, a focus coin is ignored: only Reset or Exit stop it.
     },
-    [activeProtocol, musicService, plannedMinutes, startActiveSegment, startFlowSegment],
+    [authPhase, hasCoinType, openPreStart, openResetChoice],
   );
 
-  const persistSession = useCallback(
-    async (
-      finalProtocol: CoinType,
-      note: string | null,
-      nextBlock: string | null,
-      durationMinsOverride?: number,
-      segmentsOverride?: SessionSegment[],
-    ): Promise<{ ok: boolean; sessionId?: string; message?: string; queued?: boolean }> => {
-      if (authPhase !== 'signedIn') {
-        return { ok: false, message: 'Not signed in' };
+  // -------------------------------------------------------------------------
+  // Clocks
+  // -------------------------------------------------------------------------
+
+  /**
+   * Wall-clock driven so a suspended JS thread (backgrounded app, locked
+   * screen) catches up exactly on the next tick instead of losing that time.
+   */
+  const tick = useCallback(() => {
+    const now = Date.now();
+    const delta = Math.floor((now - lastTickMsRef.current) / 1000);
+    if (delta <= 0) return;
+    lastTickMsRef.current += delta * 1000;
+
+    const current = phaseRef.current;
+
+    if (current === 'active' || current === 'overtime') {
+      const nextElapsed = blockElapsedRef.current + delta;
+      setBlockElapsed(nextElapsed);
+
+      // The timer never alarms and never stops: at zero it simply inverts.
+      const planned = plannedMinutesRef.current * 60;
+      if (nextElapsed > planned && current === 'active') {
+        setPhase('overtime');
       }
-      if (savingRef.current) {
-        return { ok: false, message: 'Save already in progress' };
-      }
-      savingRef.current = true;
-      setIsSavingSession(true);
-
-      const started = sessionStartedAt.current ?? new Date().toISOString();
-      const segs = segmentsOverride ?? segments;
-      const planned = plannedMinutes;
-      const legMins = elapsedSecondsToMinutes(
-        planned * 60 -
-          (sessionPhase === 'overtime' ? 0 : timeRemainingSeconds) +
-          overtimeSeconds,
-      );
-      const saveMeta = resolveSessionSave(
-        sessionPrimaryCoinRef.current,
-        segs,
-        finalProtocol,
-        durationMinsOverride ??
-          (segs.length > 0 ? Math.max(1, sumSegmentMinutes(segs)) : legMins),
-      );
-
-      const payload = {
-        coin_type: saveMeta.coin_type,
-        started_at: started,
-        duration_mins: saveMeta.duration_mins,
-        note,
-        next_block: nextBlock,
-        segments: saveMeta.segments,
-      };
-
-      try {
-        const result = await endSession(payload);
-
-        if (!result.ok && shouldQueueSessionError(result.message)) {
-          await enqueueOfflineSessionJob({
-            type: 'complete_session',
-            payload,
-            createdAt: new Date().toISOString(),
-          });
-          showSuccessToast('Saved locally', 'Will sync when you are back online.');
-          return { ok: true, queued: true };
-        }
-
-        if (!result.ok) {
-          Alert.alert('Could not save session', result.message ?? 'Unknown error');
-        } else {
-          if (result.sessionId) {
-            lastPersistedSessionId.current = result.sessionId;
-          }
-          if (result.statsSkipped && result.message) {
-            showSuccessToast('Session saved', result.message);
-          }
-        }
-
-        return result;
-      } finally {
-        savingRef.current = false;
-        setIsSavingSession(false);
-      }
-    },
-    [authPhase, overtimeSeconds, plannedMinutes, segments, sessionPhase, timeRemainingSeconds],
-  );
-
-  const completeActiveSession = useCallback(() => {
-    if (!activeProtocol) return;
-
-    const elapsedActive =
-      activeProtocol === 'flow'
-        ? Math.max(1, elapsedSecondsRef.current)
-        : segmentElapsedSeconds(
-            plannedMinutes,
-            timeRemainingSeconds,
-            sessionPhase === 'overtime' ? overtimeSeconds : 0,
-          );
-    const mins = elapsedSecondsToMinutes(elapsedActive);
-    const nextSegments: SessionSegment[] = [
-      ...segments,
-      { protocol: activeProtocol, duration_mins: mins },
-    ];
-    const totalMinutes = Math.max(1, sumSegmentMinutes(nextSegments));
-    const focusMinutes = sumFocusMinutes(nextSegments);
-    const recoveryMinutes = sumRecoveryMinutes(nextSegments);
-    const overtimeMinutes = Math.round(overtimeSeconds / 60);
-
-    const scoringMinutes =
-      activeProtocol === 'lockin'
-        ? mins
-        : activeProtocol === 'flow'
-          ? focusMinutes
-          : 0;
-    const pointsEarned = sessionPointsEarned(activeProtocol, scoringMinutes, sessionExits);
-
-    setSegments(nextSegments);
-    setSummary({
-      protocol: activeProtocol,
-      plannedMinutes,
-      actualMinutes: totalMinutes,
-      focusMinutes,
-      recoveryMinutes,
-      overtimeMinutes,
-      segments: nextSegments,
-      streak: null,
-      exits: sessionExits,
-      pointsEarned,
-      totalPointsAfter: 0,
-    });
-
-    const endScreen = PROTOCOL_CONFIG[activeProtocol].endScreen;
-    void deactivateFocusModeOnSessionEnd();
-
-    // RESET captures its reflection live during the session, so persist those
-    // notes now and return straight to the main screen (no end reflection screen).
-    const goStraightHome = endScreen === 'none';
-    const liveNote = goStraightHome ? journalNote.trim() || null : null;
-    const liveNextBlock = goStraightHome ? journalNextBlock.trim() || null : null;
-
-    if (endScreen === 'summary') {
-      setSessionPhase('summary');
-      navigateProtocolStack('Summary', { protocol: activeProtocol });
-    } else if (endScreen === 'journal') {
-      setSessionPhase('journal');
-      navigateProtocolStack('Journal', { protocol: activeProtocol });
-    }
-
-    setPausedFlowRemainingSeconds(null);
-    pendingFlowResumeSecondsRef.current = null;
-
-    const persistPromise = persistSession(
-      activeProtocol,
-      liveNote,
-      liveNextBlock,
-      focusMinutes,
-      nextSegments,
-    );
-    pendingPersistRef.current = persistPromise;
-    void persistPromise.finally(() => {
-      if (pendingPersistRef.current === persistPromise) {
-        pendingPersistRef.current = null;
-      }
-    });
-
-    // Return home immediately for RESET; persistence continues in the background.
-    if (goStraightHome) {
-      resetSessionState();
-    }
-  }, [
-    activeProtocol,
-    journalNote,
-    journalNextBlock,
-    overtimeSeconds,
-    persistSession,
-    plannedMinutes,
-    segments,
-    sessionPhase,
-    sessionExits,
-    timeRemainingSeconds,
-  ]);
-
-  completeActiveSessionRef.current = completeActiveSession;
-
-  const handleResetTimerEnd = useCallback(() => {
-    if (activeProtocol !== 'reset') return;
-    if (pausedFlowRemainingSeconds != null) {
-      closeSegment('reset', plannedMinutes);
-      startFlowSegment(pausedFlowRemainingSeconds);
-      setPausedFlowRemainingSeconds(null);
-      return;
-    }
-    completeActiveSession();
-  }, [
-    activeProtocol,
-    closeSegment,
-    completeActiveSession,
-    pausedFlowRemainingSeconds,
-    plannedMinutes,
-    startFlowSegment,
-  ]);
-
-  const handleLockInTimerEnd = useCallback(() => {
-    if (activeProtocol !== 'lockin') return;
-    playLockInCompleteFeedback();
-    completeActiveSession();
-  }, [activeProtocol, completeActiveSession]);
-
-  const endSessionEarly = useCallback(() => {
-    completeActiveSession();
-  }, [completeActiveSession]);
-
-  const awaitPersistedSession = useCallback(
-    async (durationMins?: number) => {
-      if (pendingPersistRef.current) {
-        return pendingPersistRef.current;
-      }
-      if (lastPersistedSessionId.current) {
-        return { ok: true as const, sessionId: lastPersistedSessionId.current };
-      }
-      if (!activeProtocol) {
-        return { ok: false as const, message: 'No active session' };
-      }
-      const segs = summary?.segments ?? segments;
-      const meta = resolveSessionSave(
-        sessionPrimaryCoinRef.current,
-        segs,
-        activeProtocol,
-        durationMins ?? summary?.focusMinutes,
-      );
-      return persistSession(meta.coin_type, null, null, meta.duration_mins, segs);
-    },
-    [activeProtocol, persistSession, segments, summary],
-  );
-
-  const finishSummary = useCallback(async () => {
-    if (!activeProtocol || !summary) {
-      resetSessionState();
       return;
     }
 
-    const result = await awaitPersistedSession(summary.focusMinutes);
-    if (!result.ok) return;
-
-    resetSessionState();
-  }, [activeProtocol, awaitPersistedSession, summary]);
-
-  const skipJournal = useCallback(async () => {
-    if (!activeProtocol) return;
-
-    const result = await awaitPersistedSession(summary?.focusMinutes);
-    if (!result.ok) return;
-
-    resetSessionState();
-  }, [activeProtocol, awaitPersistedSession, summary]);
-
-  const saveJournal = useCallback(async () => {
-    if (!activeProtocol) return;
-
-    const note = journalNote.trim() || null;
-    const nextBlock = journalNextBlock.trim() || null;
-
-    const persisted = await awaitPersistedSession(summary?.focusMinutes);
-    if (!persisted.ok) return;
-
-    if (lastPersistedSessionId.current) {
-      const result = await updateSessionNotes(lastPersistedSessionId.current, note, nextBlock);
-      if (!result.ok && shouldQueueSessionError(result.message)) {
-        await enqueueOfflineSessionJob({
-          type: 'update_session_notes',
-          sessionId: lastPersistedSessionId.current,
-          note,
-          nextBlock,
-          createdAt: new Date().toISOString(),
-        });
-        showSuccessToast('Notes saved locally', 'Will sync when you are back online.');
-      } else if (!result.ok) {
-        Alert.alert('Could not save notes', result.message ?? 'Unknown error');
+    if (current === 'breathing') {
+      const remaining = pauseRemainingRef.current - delta;
+      if (remaining > 0) {
+        setPauseRemaining(remaining);
         return;
       }
-    } else if (note || nextBlock) {
-      const meta = resolveSessionSave(
-        sessionPrimaryCoinRef.current,
-        summary?.segments ?? [],
-        activeProtocol,
-        summary?.focusMinutes,
-      );
-      const result = await persistSession(
-        meta.coin_type,
-        note,
-        nextBlock,
-        meta.duration_mins,
-        summary?.segments,
-      );
-      if (!result.ok) return;
-    }
-
-    resetSessionState();
-  }, [
-    activeProtocol,
-    awaitPersistedSession,
-    journalNote,
-    journalNextBlock,
-    persistSession,
-    summary,
-  ]);
-
-  const extendFlowTwentyMinutes = useCallback(() => {
-    lastPersistedSessionId.current = null;
-    setActiveProtocol('flow');
-    setSessionPhase('active');
-    sessionStartedAt.current = new Date().toISOString();
-    void syncFocusModeForProtocol('flow');
-    navigateProtocolStack('Active', { protocol: 'flow' });
-  }, []);
-
-  const dismissResumeFlowPrompt = useCallback(() => {
-    setResumeFlowPrompt(false);
-    pendingFlowResumeSecondsRef.current = null;
-    setPendingFlowResumeDisplay(null);
-    setPausedFlowRemainingSeconds(null);
-  }, []);
-
-  // Abandon the pre-start screen (or any non-active protocol screen) and return
-  // to the main app. Guarantees the user always has a way back to the main
-  // screen even if a protocol screen opens unexpectedly.
-  const cancelSession = useCallback(() => {
-    resetSessionState();
-  }, []);
-
-  function resetSessionState() {
-    void deactivateFocusModeOnSessionEnd();
-    setSessionPhase('idle');
-    setActiveProtocol(null);
-    setSummary(null);
-    setPausedFlowRemainingSeconds(null);
-    setJournalNote('');
-    setJournalNextBlock('');
-    sessionStartedAt.current = null;
-    sessionPrimaryCoinRef.current = null;
-    segmentStartedAt.current = null;
-    lastPersistedSessionId.current = null;
-    resetToApp();
-  }
-
-  const isSessionBlocking = useCallback(
-    () => sessionPhase === 'active' || sessionPhase === 'overtime',
-    [sessionPhase],
-  );
-
-  const phaseRef = useRef(sessionPhase);
-  phaseRef.current = sessionPhase;
-
-  const catchUpTimerFromWallClock = useCallback(() => {
-    const snap = timerSnapshotRef.current;
-    if (!snap) return;
-
-    const elapsed = Math.floor((Date.now() - snap.wallMs) / 1000);
-    timerSnapshotRef.current = null;
-    if (elapsed <= 0) return;
-
-    if (snap.protocol === 'flow') {
-      setElapsedSeconds(snap.elapsedSeconds + elapsed);
-      return;
-    }
-
-    if (snap.phase === 'active') {
-      if (snap.timeRemainingSeconds > elapsed) {
-        setTimeRemainingSeconds(snap.timeRemainingSeconds - elapsed);
-      } else {
-        const intoOvertime = elapsed - snap.timeRemainingSeconds;
-        setTimeRemainingSeconds(0);
-        if (snap.protocol === 'lockin') {
-          handleLockInTimerEnd();
-        } else if (snap.protocol === 'reset') {
-          handleResetTimerEnd();
-        } else {
-          setSessionPhase('overtime');
-          setOvertimeSeconds(snap.overtimeSeconds + intoOvertime);
-        }
+      if (!pauseCompleteRef.current) {
+        setPauseRemaining(0);
+        setPauseComplete(true);
+        // Double haptic marks the end of the rest.
+        Vibration.vibrate([0, 60, 90, 60]);
       }
-    } else {
-      setOvertimeSeconds(snap.overtimeSeconds + elapsed);
     }
-  }, [handleLockInTimerEnd, handleResetTimerEnd]);
+  }, [setBlockElapsed, setPauseComplete, setPauseRemaining, setPhase]);
 
+  useEffect(() => {
+    const running =
+      phase === 'active' || phase === 'overtime' || phase === 'breathing';
+    if (!running) return;
+
+    const interval = setInterval(tick, TICK_POLL_MS);
+    return () => clearInterval(interval);
+  }, [phase, tick]);
+
+  // Interval haptics during a block.
+  useEffect(() => {
+    if (phase !== 'active' && phase !== 'overtime') return;
+    if (!activeProtocol) return;
+
+    const config = PROTOCOL_CONFIG[activeProtocol];
+    if (!config.hapticIntervalMinutes) return;
+
+    const intervalMs = config.hapticIntervalMinutes * 60 * 1000;
+    const now = Date.now();
+    if (now - lastHapticAtRef.current >= intervalMs) {
+      Vibration.vibrate(200);
+      lastHapticAtRef.current = now;
+    }
+  }, [activeProtocol, phase, blockElapsedSeconds]);
+
+  useEffect(() => {
+    if (phase !== 'breathing') return;
+    const rotate = setInterval(() => {
+      setResetInstructionIndex((i) => (i + 1) % RESET_INSTRUCTIONS.length);
+    }, RESET_INSTRUCTION_ROTATE_MS);
+    return () => clearInterval(rotate);
+  }, [phase]);
+
+  // Foreground: catch the clock up and flush anything queued offline.
   useEffect(() => {
     if (authPhase !== 'signedIn') return;
 
@@ -820,194 +703,128 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const sub = AppState.addEventListener('change', (next) => {
       const prev = appStateRef.current;
       appStateRef.current = next;
+      if (next !== 'active' || prev === 'active') return;
 
-      const wasBackground = prev === 'background' || prev === 'inactive';
-      const goingBackground = next === 'background' || next === 'inactive';
+      tick();
+      flush();
 
-      if (goingBackground) {
-        const phase = phaseRef.current;
-        if (phase === 'active' || phase === 'overtime') {
-          setSessionExits((count) => count + 1);
-          wentBackgroundAtRef.current = Date.now();
-          timerSnapshotRef.current = {
-            phase,
-            timeRemainingSeconds: timeRemainingRef.current,
-            overtimeSeconds: overtimeSecondsRef.current,
-            elapsedSeconds: elapsedSecondsRef.current,
-            protocol: activeProtocolRef.current,
-            wallMs: Date.now(),
-          };
-        }
-      }
-
-      if (next === 'active' && wasBackground) {
-        const phase = phaseRef.current;
-        if (phase === 'active' || phase === 'overtime') {
-          catchUpTimerFromWallClock();
-          const bgMs = wentBackgroundAtRef.current
-            ? Date.now() - wentBackgroundAtRef.current
-            : 0;
-          if (bgMs >= RESUME_OVERLAY_MIN_BACKGROUND_MS) {
-            setShowResumeOverlay(true);
-          }
-        }
-        wentBackgroundAtRef.current = null;
-        flush();
+      // A shift nobody touched for hours is closed quietly: its XP still banks,
+      // but an abandoned shift should not gate rewards forever.
+      const idleFor = Date.now() - shiftTouchedAtRef.current;
+      if (
+        phaseRef.current === 'idle' &&
+        shiftStartedAtRef.current &&
+        shiftBlocksRef.current.length > 0 &&
+        idleFor > SHIFT_AUTO_CLOSE_MS
+      ) {
+        void (async () => {
+          await commitShiftNow('auto');
+          resetShiftState();
+        })();
       }
     });
 
     return () => sub.remove();
-  }, [authPhase, catchUpTimerFromWallClock]);
+  }, [authPhase, commitShiftNow, resetShiftState, tick]);
 
+  // Signing out must not leave a shift, a timer or a shield behind.
   useEffect(() => {
-    if (sessionPhase !== 'active' && sessionPhase !== 'overtime') {
-      timerSnapshotRef.current = null;
-      setShowResumeOverlay(false);
-    }
-  }, [sessionPhase]);
+    if (authPhase === 'signedIn') return;
+    if (phaseRef.current === 'idle' && !shiftStartedAtRef.current) return;
+    resetShiftState();
+    resetPublishedStatusCache();
+  }, [authPhase, resetShiftState]);
 
-  useEffect(() => {
-    if (sessionPhase !== 'active' && sessionPhase !== 'overtime') return;
+  const isSessionBlocking = useCallback(
+    () => phase === 'active' || phase === 'overtime' || phase === 'breathing',
+    [phase],
+  );
 
-    const interval = setInterval(() => {
-      const proto = activeProtocolRef.current;
-
-      if (proto === 'flow' && phaseRef.current === 'active') {
-        setElapsedSeconds((e) => e + 1);
-        return;
-      }
-
-      if (phaseRef.current === 'active') {
-        setTimeRemainingSeconds((t) => {
-          if (t <= 1) {
-            if (proto === 'lockin') {
-              setTimeout(() => handleLockInTimerEnd(), 0);
-              return 0;
-            }
-            if (proto === 'reset') {
-              setTimeout(() => handleResetTimerEnd(), 0);
-              return 0;
-            }
-            setSessionPhase('overtime');
-            return 0;
-          }
-          return t - 1;
-        });
-      } else if (phaseRef.current === 'overtime') {
-        setOvertimeSeconds((o) => o + 1);
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [sessionPhase, handleLockInTimerEnd, handleResetTimerEnd]);
-
-  useEffect(() => {
-    if (sessionPhase !== 'active' && sessionPhase !== 'overtime') return;
-    if (!activeProtocol) return;
-
-    const config = PROTOCOL_CONFIG[activeProtocol];
-    if (!config.hapticIntervalMinutes) return;
-
-    const intervalMs = config.hapticIntervalMinutes * 60 * 1000;
-    const now = Date.now();
-    if (now - lastHapticAt.current >= intervalMs) {
-      Vibration.vibrate(200);
-      lastHapticAt.current = now;
-    }
-  }, [activeProtocol, sessionPhase, timeRemainingSeconds, overtimeSeconds]);
-
-  useEffect(() => {
-    if (activeProtocol !== 'reset') return;
-
-    const rotate = setInterval(() => {
-      if (phaseRef.current !== 'active' && phaseRef.current !== 'overtime') return;
-      setResetInstructionIndex((i) => (i + 1) % RESET_INSTRUCTIONS.length);
-    }, RESET_INSTRUCTION_ROTATE_MS);
-
-    return () => clearInterval(rotate);
-  }, [activeProtocol]);
-
+  const shiftFocusMinutes = useMemo(() => totalFocusMinutes(shiftBlocks), [shiftBlocks]);
+  const blockIndex = useMemo(() => focusBlockCount(shiftBlocks) + 1, [shiftBlocks]);
   const resetInstruction = RESET_INSTRUCTIONS[resetInstructionIndex];
 
   const value = useMemo<SessionContextValue>(
     () => ({
-      phase: sessionPhase,
+      phase,
       activeProtocol,
       plannedMinutes,
-      timeRemainingSeconds,
-      overtimeSeconds,
-      elapsedSeconds,
-      sessionExits,
-      flowThought,
+      blockElapsedSeconds,
+      blockRemainingSeconds,
+      blockOvertimeSeconds,
+      isOvertime,
+      blockIndex,
+      shiftOpen: shiftStartedAtRef.current != null,
+      shiftBlocks,
+      shiftFocusMinutes,
       resetInstruction,
-      summary,
-      journalNote,
-      journalNextBlock,
-      resumeFlowPrompt,
-      pendingFlowResumeSeconds: pendingFlowResumeDisplay,
-      pausedFlowRemainingSeconds,
-      segmentIndex: segments.length + 1,
-      isSavingSession,
+      tiredness,
+      pauseMinutes,
+      pauseRemainingSeconds,
+      pauseComplete,
+      closeoutDone,
+      closeoutNext,
+      nextTarget,
+      finale,
+      isSaving,
       setPlannedMinutes,
-      setFlowThought,
-      setJournalNote,
-      setJournalNextBlock,
-      beginSession,
-      endSessionEarly,
-      finishSummary,
-      skipJournal,
-      saveJournal,
-      extendFlowTwentyMinutes,
-      dismissResumeFlowPrompt,
+      setCloseoutDone,
+      setCloseoutNext,
+      setNextTarget,
+      beginBlock,
+      chooseTiredness,
+      startPause,
+      finishCloseout,
+      finishBreathing,
+      chooseEndShift,
+      confirmEndShift,
+      dismissFinale,
+      exitNow,
       cancelSession,
       handleProtocolTrigger,
       isSessionBlocking,
     }),
     [
       activeProtocol,
-      beginSession,
+      beginBlock,
+      blockElapsedSeconds,
+      blockIndex,
+      blockOvertimeSeconds,
+      blockRemainingSeconds,
       cancelSession,
-      dismissResumeFlowPrompt,
-      elapsedSeconds,
-      endSessionEarly,
-      extendFlowTwentyMinutes,
-      finishSummary,
-      flowThought,
+      chooseEndShift,
+      chooseTiredness,
+      closeoutDone,
+      closeoutNext,
+      confirmEndShift,
+      dismissFinale,
+      exitNow,
+      finale,
+      finishBreathing,
+      finishCloseout,
       handleProtocolTrigger,
+      isOvertime,
+      isSaving,
       isSessionBlocking,
-      journalNextBlock,
-      journalNote,
-      overtimeSeconds,
+      nextTarget,
+      pauseComplete,
+      pauseMinutes,
+      pauseRemainingSeconds,
+      phase,
       plannedMinutes,
       resetInstruction,
-      resumeFlowPrompt,
-      pendingFlowResumeDisplay,
-      pausedFlowRemainingSeconds,
-      isSavingSession,
-      saveJournal,
-      segments,
-      sessionExits,
-      sessionPhase,
-      skipJournal,
-      summary,
-      timeRemainingSeconds,
+      setCloseoutDone,
+      setCloseoutNext,
+      setNextTarget,
+      setPlannedMinutes,
+      shiftBlocks,
+      shiftFocusMinutes,
+      startPause,
+      tiredness,
     ],
   );
 
-  return (
-    <SessionContext.Provider value={value}>
-      <SessionResumeOverlay
-        visible={showResumeOverlay}
-        protocol={activeProtocol}
-        onContinue={() => setShowResumeOverlay(false)}
-        onEndSession={() => {
-          setShowResumeOverlay(false);
-          endSessionEarly();
-        }}
-      />
-      {children}
-    </SessionContext.Provider>
-  );
+  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 
 export function useSession() {

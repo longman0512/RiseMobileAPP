@@ -4,7 +4,6 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { CoinRegistrationScreen } from '../../screens/onboarding/CoinRegistrationScreen';
 import { FocusSetupScreen } from '../../screens/onboarding/FocusSetupScreen';
-import { MusicPickerScreen } from '../../screens/onboarding/MusicPickerScreen';
 import { PermissionsScreen } from '../../screens/onboarding/PermissionsScreen';
 import { PriorityContactsScreen } from '../../screens/onboarding/PriorityContactsScreen';
 import type { RootStackParamList } from '../RootNavigator';
@@ -14,7 +13,6 @@ export type OnboardingStackParamList = {
   Permissions: undefined;
   CoinRegistration: undefined;
   FocusSetup: undefined;
-  MusicPicker: undefined;
   PriorityContacts: undefined;
   Scanning: undefined;
   Pairing: undefined;
@@ -35,7 +33,6 @@ export function OnboardingNavigator({ route }: Props) {
       <Stack.Screen name="CoinRegistration" component={CoinRegistrationScreen} />
       <Stack.Screen name="FocusSetup" component={FocusSetupScreen} />
       <Stack.Screen name="Permissions" component={PermissionsScreen} />
-      <Stack.Screen name="MusicPicker" component={MusicPickerScreen} />
       <Stack.Screen name="PriorityContacts" component={PriorityContactsScreen} />
     </Stack.Navigator>
   );

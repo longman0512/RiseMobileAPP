@@ -103,11 +103,11 @@ export function FocusSetupScreen() {
 
   const onContinue = async () => {
     await setFocusSetupComplete(true);
-    navigation.navigate('MusicPicker');
+    navigation.navigate('PriorityContacts');
   };
 
   const onSkip = () => {
-    navigation.navigate('MusicPicker');
+    navigation.navigate('PriorityContacts');
   };
 
   const onChooseApps = async (protocol: CoinType) => {

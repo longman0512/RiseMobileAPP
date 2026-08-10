@@ -1,6 +1,6 @@
 import { PROTOCOL_CONFIG, STREAK_MIN_MINUTES } from './protocolConfig';
 import type { SessionRecord, UserStats } from './sessionApi';
-import { formatPoints, rankFromPoints, totalPointsFromMinutes } from './sessionScoring';
+import { formatPoints, rankFromPoints } from './sessionScoring';
 
 export function formatHoursMinutes(totalMinutes: number): string {
   if (totalMinutes <= 0) return '0m';
@@ -33,7 +33,8 @@ export function resetSessionCount(sessions: SessionRecord[]): number {
 }
 
 export function journeyRank(stats: UserStats) {
-  const points = totalPointsFromMinutes(stats.total_lockin_mins, stats.total_flow_mins);
+  // Committed XP only — a shift in progress must not move the rank.
+  const points = stats.total_xp;
   return { points, rank: rankFromPoints(points) };
 }
 
@@ -43,7 +44,7 @@ export function founderBadgeLabel(founderNumber: number | null | undefined): str
 }
 
 export function formatRankPoints(points: number): string {
-  return `${formatPoints(points)} pts`;
+  return `${formatPoints(points)} XP`;
 }
 
 export function lockInDefaultLabel(): string {

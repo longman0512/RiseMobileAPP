@@ -1,6 +1,6 @@
 import { StyleSheet } from 'react-native';
 
-export const SETUP_TOTAL_STEPS = 4;
+export const SETUP_TOTAL_STEPS = 3;
 
 export function setupEyebrow(step: number): string {
   return `SETUP · ${step} OF ${SETUP_TOTAL_STEPS}`;

@@ -8,6 +8,30 @@ import { useAuth } from './AuthProvider';
 
 const LEGACY_DISMISSED_KEY = 'coinOnboardingDismissed';
 
+/** Per-user snapshot of the coin list so a cold start offline still works. */
+function cacheKeyForUser(userId: string): string {
+  return `rise_coins_cache_v1:${userId}`;
+}
+
+async function readCachedCoins(userId: string): Promise<Coin[] | null> {
+  try {
+    const raw = await AsyncStorage.getItem(cacheKeyForUser(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Coin[];
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedCoins(userId: string, coins: Coin[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(cacheKeyForUser(userId), JSON.stringify(coins));
+  } catch {
+    // A failed cache write is not worth surfacing.
+  }
+}
+
 type CoinsContextValue = {
   loading: boolean;
   coins: Coin[];
@@ -42,6 +66,8 @@ export function CoinsProvider({ children }: { children: React.ReactNode }) {
   const [fetching, setFetching] = useState(false);
   const [coins, setCoins] = useState<Coin[]>([]);
   const [skippedThisSession, setSkippedThisSession] = useState(false);
+  /** True when the last server read failed and the list may be incomplete. */
+  const [coinsUnverified, setCoinsUnverified] = useState(false);
 
   const isHydrated = phase === 'signedIn' && !!userId && hydratedUserId === userId;
   const loading = phase === 'signedIn' && !!userId && (!isHydrated || fetching);
@@ -58,17 +84,37 @@ export function CoinsProvider({ children }: { children: React.ReactNode }) {
       setSkippedThisSession(false);
       setHydratedUserId(null);
       setFetching(false);
+      setCoinsUnverified(false);
       return;
     }
 
     const alreadyHydrated = hydratedUserId === userId;
     if (!alreadyHydrated) {
       setFetching(true);
+      const cached = await readCachedCoins(userId);
+      if (cached) {
+        setCoins(cached);
+      }
     }
 
-    const coinsResult = await supabase.from('coins').select('*').eq('user_id', userId).eq('active', true);
+    const coinsResult = await supabase
+      .from('coins')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('active', true);
 
-    setCoins((coinsResult.data as Coin[] | null) ?? []);
+    if (coinsResult.error) {
+      // Keep whatever we already have (cache or previous fetch). Overwriting it
+      // with [] would report the user as coinless and bounce them into
+      // onboarding just because the network blipped.
+      setCoinsUnverified(true);
+    } else {
+      const nextCoins = (coinsResult.data as Coin[] | null) ?? [];
+      setCoins(nextCoins);
+      setCoinsUnverified(false);
+      void writeCachedCoins(userId, nextCoins);
+    }
+
     setHydratedUserId(userId);
     setFetching(false);
 
@@ -79,6 +125,7 @@ export function CoinsProvider({ children }: { children: React.ReactNode }) {
     refresh().catch(() => {
       if (phase === 'signedIn' && userId) {
         setHydratedUserId(userId);
+        setCoinsUnverified(true);
       }
       setFetching(false);
     });
@@ -144,20 +191,28 @@ export function CoinsProvider({ children }: { children: React.ReactNode }) {
     [refresh],
   );
 
-  const resolveCoinForSession = useCallback(async (coinId: string): Promise<CoinType | null> => {
-    const normalized = normalizeCoinId(coinId);
-    if (!normalized) return null;
+  const resolveCoinForSession = useCallback(
+    async (coinId: string): Promise<CoinType | null> => {
+      const normalized = normalizeCoinId(coinId);
+      if (!normalized) return null;
 
-    const { data, error } = await supabase.rpc('resolve_coin_for_session', {
-      p_coin_id: normalized,
-    });
+      const { data, error } = await supabase.rpc('resolve_coin_for_session', {
+        p_coin_id: normalized,
+      });
 
-    if (error) {
+      if (!error) {
+        return (data as CoinType | null) ?? null;
+      }
+
+      // Offline: fall back to the locally known coin list so tapping a coin the
+      // user has already registered still starts a session.
+      const local = coins.find((c) => c.active && normalizeCoinId(c.coin_id) === normalized);
+      if (local) return local.coin_type;
+
       throw new Error(error.message);
-    }
-
-    return (data as CoinType | null) ?? null;
-  }, []);
+    },
+    [coins],
+  );
 
   const dismissCoinOnboarding = useCallback(async () => {
     setSkippedThisSession(true);
@@ -167,8 +222,11 @@ export function CoinsProvider({ children }: { children: React.ReactNode }) {
     if (!isHydrated) return false;
     if (coins.length > 0) return false;
     if (skippedThisSession) return false;
+    // "No coins" that we could not confirm with the server is not a reason to
+    // restart onboarding — registering a coin needs the network anyway.
+    if (coinsUnverified) return false;
     return true;
-  }, [isHydrated, coins.length, skippedThisSession]);
+  }, [isHydrated, coins.length, skippedThisSession, coinsUnverified]);
 
   const value = useMemo<CoinsContextValue>(
     () => ({

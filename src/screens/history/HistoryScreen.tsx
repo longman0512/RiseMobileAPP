@@ -32,6 +32,7 @@ const EMPTY_STATS: UserStats = {
   total_lockin_mins: 0,
   total_flow_mins: 0,
   total_reset_mins: 0,
+  total_xp: 0,
 };
 
 function avatarInitial(username: string | undefined, email: string | undefined): string {

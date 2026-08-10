@@ -11,14 +11,9 @@
 
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
 
-    <!-- Android 11+ package visibility: music app schemes for Linking.canOpenURL,
-         and the launcher intent so the app-blocking picker can enumerate apps. -->
+    <!-- Android 11+ package visibility: the launcher intent so the app-blocking
+         picker can enumerate installed apps. -->
     <queries>
-        <package android:name="com.spotify.music" />
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <data android:scheme="spotify" />
-        </intent>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -57,6 +52,31 @@
             <category android:name="android.intent.category.DEFAULT" />
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="rise" android:host="protocol" android:pathPrefix="/" />
+        </intent-filter>
+
+        <!-- Coin taps. The coins carry an NDEF Universal Link, so Android needs
+             both halves to open the app instead of a browser:
+             1. NDEF_DISCOVERED wins the NFC tag dispatch outright, even before
+                (or without) domain verification.
+             2. The verified App Link handles the same URL when it arrives from
+                anywhere else (a browser, a shared link, another app).
+             App Link verification requires /.well-known/assetlinks.json on
+             nfc.officialrise.com — see web/.well-known/assetlinks.json. -->
+        <intent-filter>
+            <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <data android:scheme="https" android:host="nfc.officialrise.com" android:pathPrefix="/protocol" />
+        </intent-filter>
+        <intent-filter>
+            <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <data android:scheme="rise" android:host="protocol" android:pathPrefix="/" />
+        </intent-filter>
+        <intent-filter android:autoVerify="true">
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" android:host="nfc.officialrise.com" android:pathPrefix="/protocol" />
         </intent-filter>
       </activity>
 
