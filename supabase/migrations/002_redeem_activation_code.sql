@@ -1,6 +1,24 @@
 -- Redeem an activation code for the authenticated user.
 -- Run in Supabase SQL editor or via CLI.
 
+-- The table this function operates on was originally created by hand in the
+-- Supabase dashboard and never captured here, so a project rebuilt from
+-- migrations alone failed on the index below. Defined now so the schema is
+-- reproducible from scratch.
+CREATE TABLE IF NOT EXISTS public.activation_codes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code TEXT NOT NULL,
+  used BOOLEAN NOT NULL DEFAULT false,
+  user_id UUID REFERENCES auth.users (id) ON DELETE SET NULL,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.activation_codes ENABLE ROW LEVEL SECURITY;
+
+-- No client policies: codes are only ever touched through the SECURITY DEFINER
+-- function below, so nobody can enumerate or forge them.
+
 CREATE UNIQUE INDEX IF NOT EXISTS activation_codes_code_idx ON public.activation_codes (code);
 
 CREATE OR REPLACE FUNCTION public.redeem_activation_code(p_code TEXT)
