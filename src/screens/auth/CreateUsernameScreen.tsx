@@ -26,12 +26,13 @@ export function CreateUsernameScreen() {
 
     setLoading(true);
     try {
-      const { error: upsertError } = await supabase.from('profiles').upsert({
-        id: userId,
-        username: clean,
+      // Goes through an RPC: profiles is column-locked so friend_code cannot
+      // be read or edited by clients, which makes a direct upsert impossible.
+      const { error: rpcError } = await supabase.rpc('set_my_username', {
+        p_username: clean,
       });
-      if (upsertError) {
-        Alert.alert('Failed', upsertError.message);
+      if (rpcError) {
+        Alert.alert('Failed', rpcError.message);
         return;
       }
 

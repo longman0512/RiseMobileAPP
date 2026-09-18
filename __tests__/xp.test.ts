@@ -109,3 +109,24 @@ describe('pause suggestion', () => {
     ).toBe(8);
   });
 });
+
+// Regression: a pause used to be recorded at its *suggested* length. Leaving
+// the breathing screen after 1 minute of a 12-minute suggestion wrote 12 into
+// the chain — a break the user never took, inflating recovery minutes.
+describe('pause is billed from real elapsed time', () => {
+  function billPause(startedAtMs: number, nowMs: number): number {
+    return Math.max(1, Math.round((nowMs - startedAtMs) / 60000));
+  }
+
+  it('bills what was actually rested, not what was suggested', () => {
+    const start = Date.parse('2026-09-10T09:00:00Z');
+    expect(billPause(start, start + 60_000)).toBe(1);
+    expect(billPause(start, start + 8 * 60_000)).toBe(8);
+  });
+
+  it('bills a minimum of one minute for a pause that was entered at all', () => {
+    const start = Date.parse('2026-09-10T09:00:00Z');
+    expect(billPause(start, start + 2_000)).toBe(1);
+    expect(billPause(start, start)).toBe(1);
+  });
+});

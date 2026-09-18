@@ -34,7 +34,16 @@ function isRejectedCredentialError(error: unknown): boolean {
     message.includes('jwt expired') ||
     message.includes('user not found') ||
     message.includes('session not found') ||
-    message.includes('session_not_found')
+    message.includes('session_not_found') ||
+    // A stored refresh token the server has never heard of. Happens whenever
+    // the backend it was issued by is gone — a rebuilt Supabase project, a
+    // wiped auth schema, a revoked session. It can never recover, so the only
+    // correct response is to drop it and show the login screen; keeping it
+    // leaves the app erroring on every call with no way out.
+    message.includes('refresh token not found') ||
+    message.includes('invalid refresh token') ||
+    message.includes('refresh_token_not_found') ||
+    message.includes('invalid_grant')
   );
 }
 
@@ -69,7 +78,7 @@ async function validateSession(): Promise<ValidationOutcome> {
   }
 
   if (isRejectedCredentialError(error)) {
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
     return { kind: 'signedOut' };
   }
 

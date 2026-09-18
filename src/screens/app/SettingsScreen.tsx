@@ -196,7 +196,7 @@ export function SettingsScreen() {
     }
     setSavingUsername(true);
     try {
-      const { error } = await supabase.from('profiles').upsert({ id: userId, username: clean });
+      const { error } = await supabase.rpc('set_my_username', { p_username: clean });
       if (error) {
         Alert.alert('Failed', error.message);
         return;

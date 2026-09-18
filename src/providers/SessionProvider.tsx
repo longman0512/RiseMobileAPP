@@ -94,6 +94,7 @@ type SessionContextValue = {
   beginBlock: (plannedMinutesOverride?: number) => void;
   chooseTiredness: (level: TirednessLevel) => void;
   startPause: () => void;
+  resumeBlock: () => void;
   finishCloseout: () => void;
   finishBreathing: () => void;
   chooseEndShift: () => void;
@@ -159,6 +160,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const shiftStartedAtRef = useRef<string | null>(null);
   const shiftTouchedAtRef = useRef<number>(0);
   const pauseRemainingRef = useRef(0);
+  /** When the breathing screen opened. The pause is billed from this, not from
+   *  the suggested duration — leaving after 1 minute of a 12-minute suggestion
+   *  must record 1, or the chain reports a break the user never took. */
+  const pauseStartedAtRef = useRef<number | null>(null);
   const pauseCompleteRef = useRef(false);
   const closeoutDoneRef = useRef('');
   const closeoutNextRef = useRef('');
@@ -167,6 +172,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const lastHapticAtRef = useRef(0);
   const committingRef = useRef(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const bankPauseRef = useRef<(() => void) | null>(null);
 
   const setPhase = useCallback((next: SessionPhase) => {
     phaseRef.current = next;
@@ -398,6 +404,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const openPreStart = useCallback(
     (protocol: CoinType) => {
+      // Resuming straight from the breathing screen still ends the pause.
+      bankPauseRef.current?.();
       const config = PROTOCOL_CONFIG[protocol];
       setProtocol(protocol);
       setPlannedMinutes(config.defaultMinutes);
@@ -455,8 +463,24 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   // -------------------------------------------------------------------------
 
   const openResetChoice = useCallback(() => {
+    bankPauseRef.current?.();
     setPhase('resetChoice');
     navigateProtocolStack('ResetChoice', {});
+  }, [setPhase]);
+
+  /**
+   * Back out of the Reset choice and carry on with the block that is still
+   * running. The clock is frozen while the choice screen is up (the ticker only
+   * advances in active/overtime), so the wall-clock anchor is re-based here —
+   * otherwise the seconds spent deciding would all land in one jump.
+   */
+  const resumeBlock = useCallback(() => {
+    const protocol = protocolRef.current;
+    if (!protocol) return;
+    lastTickMsRef.current = Date.now();
+    const planned = plannedMinutesRef.current * 60;
+    setPhase(blockElapsedRef.current > planned ? 'overtime' : 'active');
+    navigateProtocolStack('Active', { protocol });
   }, [setPhase]);
 
   /** Pause chosen: bank the block, then ask how tired they are. */
@@ -493,27 +517,41 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   );
 
   const finishCloseout = useCallback(() => {
-    // Record the pause itself so the chain and the squad view show it.
-    const mins = pauseMinutes;
-    setShiftBlocks([
-      ...shiftBlocksRef.current,
-      { protocol: 'reset', standardMins: mins, overtimeMins: 0 },
-    ]);
-
+    pauseStartedAtRef.current = Date.now();
     setResetInstructionIndex(0);
     setPhase('breathing');
     lastTickMsRef.current = Date.now();
     // Apps stay blocked through the pause — no deactivate here on purpose.
     publishShiftStatus('paused', new Date().toISOString());
     navigateProtocolStack('Breathe', {});
-  }, [pauseMinutes, publishShiftStatus, setPhase, setShiftBlocks]);
+  }, [publishShiftStatus, setPhase]);
+
+  /**
+   * Close the pause and fold the time actually spent resting into the chain.
+   * Idempotent, because a pause can be left three ways: tapping the breathing
+   * screen, tapping a focus coin to resume, or tapping Reset again.
+   */
+  const bankPause = useCallback(() => {
+    const startedAt = pauseStartedAtRef.current;
+    if (startedAt == null) return;
+    pauseStartedAtRef.current = null;
+
+    const mins = Math.max(1, Math.round((Date.now() - startedAt) / 60000));
+    setShiftBlocks([
+      ...shiftBlocksRef.current,
+      { protocol: 'reset', standardMins: mins, overtimeMins: 0 },
+    ]);
+  }, [setShiftBlocks]);
 
   /** Leaving the breathing screen: the shift stays open, awaiting a coin tap. */
+  bankPauseRef.current = bankPause;
+
   const finishBreathing = useCallback(() => {
+    bankPause();
     setPhase('idle');
     touchShift();
     resetToApp();
-  }, [setPhase, touchShift]);
+  }, [bankPause, setPhase, touchShift]);
 
   const chooseEndShift = useCallback(() => {
     const banked = bankCurrentBlock();
@@ -607,12 +645,40 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Lock In / Flow start or resume a block — always by coin tap.
+      if (current === 'resetChoice') {
+        // The user changed their mind. Same coin: carry on with the running
+        // block. Different coin: bank this one and start the next block of the
+        // SAME shift — no pause needed to switch protocol.
+        if (protocolRef.current === protocol) {
+          resumeBlock();
+          return;
+        }
+        const banked = bankCurrentBlock();
+        if (banked && blockStartedAtRef.current) {
+          void recordBlockHistory(banked, blockStartedAtRef.current);
+        }
+        setProtocol(null);
+        setBlockElapsed(0);
+        openPreStart(protocol);
+        return;
+      }
+
       if (current === 'idle' || current === 'prestart' || current === 'breathing') {
         openPreStart(protocol);
       }
       // While a block runs, a focus coin is ignored: only Reset or Exit stop it.
     },
-    [authPhase, hasCoinType, openPreStart, openResetChoice],
+    [
+      authPhase,
+      bankCurrentBlock,
+      hasCoinType,
+      openPreStart,
+      openResetChoice,
+      recordBlockHistory,
+      resumeBlock,
+      setBlockElapsed,
+      setProtocol,
+    ],
   );
 
   // -------------------------------------------------------------------------
@@ -774,6 +840,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       beginBlock,
       chooseTiredness,
       startPause,
+      resumeBlock,
       finishCloseout,
       finishBreathing,
       chooseEndShift,
@@ -819,6 +886,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setPlannedMinutes,
       shiftBlocks,
       shiftFocusMinutes,
+      resumeBlock,
       startPause,
       tiredness,
     ],

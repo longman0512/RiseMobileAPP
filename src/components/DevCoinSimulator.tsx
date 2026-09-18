@@ -2,7 +2,12 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import { isDevCoinSimulatorEnabled } from '../config/env';
-import { buildProtocolDeepLink, simulateProtocolTap } from '../lib/protocolDeepLink';
+import {
+  areProtocolDeepLinksSuppressed,
+  buildProtocolDeepLink,
+  simulateProtocolTap,
+} from '../lib/protocolDeepLink';
+import { showErrorToast, showSuccessToast } from '../lib/toast';
 import { useAuth } from '../providers/AuthProvider';
 import { useCoins } from '../providers/CoinsProvider';
 import { useSession } from '../providers/SessionProvider';
@@ -12,24 +17,82 @@ type Props = {
   compact?: boolean;
 };
 
+/**
+ * Stand-in NFC chip UIDs, one per protocol. Hex only, so they survive
+ * normalizeCoinId exactly as a real NTAG215 UID would.
+ */
+const DEV_COIN_IDS: Record<CoinType, string> = {
+  lockin: 'DE7000000001',
+  flow: 'DE7000000002',
+  reset: 'DE7000000003',
+};
+
 export function DevCoinSimulator({ compact = false }: Props) {
   const { phase: authPhase } = useAuth();
-  const { coins } = useCoins();
+  const { coins, registerCoinStrict } = useCoins();
   const session = useSession();
   const [bypassRegistration, setBypassRegistration] = useState(true);
+  const [registering, setRegistering] = useState(false);
 
   const registeredTypes = useMemo(
     () => coins.filter((c) => c.active).map((c) => c.coin_type),
     [coins],
   );
 
-  if (!isDevCoinSimulatorEnabled()) {
+  // Visible in any Debug build, so simulating a coin tap needs nothing more
+  // than a Metro reload. __DEV__ is false in release builds, so this can never
+  // ship; ENABLE_DEV_COIN_SIMULATOR additionally turns it on in a
+  // TestFlight/QA build for testers who have no hardware.
+  if (!__DEV__ && !isDevCoinSimulatorEnabled()) {
     return null;
   }
 
   const onTap = (protocol: CoinType) => {
+    // Registration screens deliberately swallow protocol taps so a real coin
+    // held against the phone cannot start a session mid-pairing. Say so rather
+    // than looking broken.
+    if (areProtocolDeepLinksSuppressed()) {
+      showErrorToast(
+        'Tap ignored here',
+        'This screen owns the NFC reader. Use REG to register coins, or leave the screen first.',
+      );
+      return;
+    }
     const hasRegisteredCoin = bypassRegistration || coins.some((c) => c.coin_type === protocol && c.active);
     simulateProtocolTap(protocol, session.handleProtocolTrigger, { hasRegisteredCoin });
+  };
+
+  /**
+   * Register the three stand-in coins. A simulator has no NFC at all, so this
+   * is the only way to get past coin onboarding and exercise the real
+   * registration RPC, ownership checks and resolve_coin_for_session.
+   */
+  const onRegisterAll = () => {
+    if (registering) return;
+    void (async () => {
+      setRegistering(true);
+      const done: string[] = [];
+      const failed: string[] = [];
+      try {
+        for (const type of COIN_TYPES) {
+          if (coins.some((c) => c.coin_type === type && c.active)) continue;
+          const result = await registerCoinStrict(DEV_COIN_IDS[type], type);
+          if (result.ok) done.push(COIN_LABELS[type]);
+          else failed.push(`${COIN_LABELS[type]}: ${result.message}`);
+        }
+      } finally {
+        setRegistering(false);
+      }
+
+      if (failed.length > 0) {
+        showErrorToast('Register failed', failed.join(' · '));
+      } else {
+        showSuccessToast(
+          'Dev coins registered',
+          done.length > 0 ? done.join(', ') : 'All three were already registered.',
+        );
+      }
+    })();
   };
 
   const pausedLabel = session.pauseRemainingSeconds
@@ -54,6 +117,16 @@ export function DevCoinSimulator({ compact = false }: Props) {
             <Text className="text-amber-100 text-[9.5px] font-bold">{COIN_LABELS[type]}</Text>
           </Pressable>
         ))}
+        <Pressable
+          onPress={onRegisterAll}
+          disabled={registering}
+          className="px-2 py-1.5 rounded-lg bg-amber-500/25 border border-amber-500/50 items-center"
+          accessibilityLabel="Register the three stand-in dev coins"
+        >
+          <Text className="text-amber-100 text-[9.5px] font-bold">
+            {registering ? '…' : 'REG'}
+          </Text>
+        </Pressable>
         <Pressable
           onPress={() => setBypassRegistration((v) => !v)}
           className={[

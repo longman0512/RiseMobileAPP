@@ -41,10 +41,12 @@ export function ProtocolPreStartScreen({ route }: Props) {
 
       <Text style={[styles.protocolTitle, { color: theme.accent }]}>{COIN_LABELS[protocol]}</Text>
 
-      {protocol === 'lockin' ? (
+      {protocol === 'lockin' || protocol === 'flow' ? (
         <>
           <Text style={styles.durationHint}>
-            Set duration ({config.minMinutes}–{config.maxMinutes} min)
+            {protocol === 'flow'
+              ? `Overtime starts after (${config.minMinutes}–${config.maxMinutes} min)`
+              : `Set duration (${config.minMinutes}–${config.maxMinutes} min)`}
           </Text>
           {presets.length > 0 ? (
             <View style={styles.presets}>
@@ -74,8 +76,6 @@ export function ProtocolPreStartScreen({ route }: Props) {
             />
           </View>
         </>
-      ) : protocol === 'flow' ? (
-        <Text style={styles.durationHint}>Open-ended · counts up</Text>
       ) : (
         <Text style={styles.durationHint}>
           Set duration ({config.minMinutes}–{config.maxMinutes} min)
@@ -98,7 +98,8 @@ export function ProtocolPreStartScreen({ route }: Props) {
 
       {protocol === 'flow' ? (
         <Text style={styles.flowNote}>
-          Priority contacts can reach you when Focus Mode is configured.
+          FLOW never stops on its own — past this point it keeps counting up and
+          earns the higher overtime rate.
         </Text>
       ) : null}
 

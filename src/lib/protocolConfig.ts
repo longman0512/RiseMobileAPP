@@ -40,6 +40,13 @@ export const PROTOCOL_CONFIG: Record<CoinType, ProtocolConfig> = {
     defaultMinutes: 30,
     minMinutes: 15,
     maxMinutes: 90,
+    /**
+     * FLOW never hard-stops, but it still needs a planned length: that is the
+     * point where the timer inverts and minutes start earning the overtime
+     * rate. Without one the step-up would always land at the 30-minute default
+     * and the user could not choose it.
+     */
+    durationPresets: [30, 60, 90],
     openEnded: true,
     hapticIntervalMinutes: 15,
     allowsPause: true,

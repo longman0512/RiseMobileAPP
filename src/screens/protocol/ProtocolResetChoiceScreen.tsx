@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { HoldToConfirm } from '../../components/HoldToConfirm';
@@ -39,8 +39,12 @@ export function ProtocolResetChoiceScreen() {
         />
       </View>
 
+      <Pressable style={styles.keepWorking} onPress={session.resumeBlock}>
+        <Text style={styles.keepWorkingText}>Keep working</Text>
+      </Pressable>
+
       <Text style={styles.footNote}>
-        Hold a button for three seconds. Let go to cancel.
+        Hold a button for three seconds. Or tap a Lock In / Flow coin to carry on.
       </Text>
     </View>
   );
@@ -83,6 +87,17 @@ const styles = StyleSheet.create({
   choices: {
     gap: 14,
     marginTop: 'auto',
+  },
+  keepWorking: {
+    alignItems: 'center',
+    height: 42,
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  keepWorkingText: {
+    color: '#9A9AA2',
+    fontSize: 13,
+    fontWeight: '500',
   },
   footNote: {
     color: '#5C5C66',
